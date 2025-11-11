@@ -1,0 +1,11 @@
+# Github settings
+.github/
+
+# Kiro settings
+.kiro/
+
+# Excel files
+*.xlsx
+
+# Macos 
+.DS_Store
