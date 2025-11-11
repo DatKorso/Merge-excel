@@ -398,25 +398,31 @@ func (m *Manager) LoadSettings() (*AppSettings, error) {
 // GetOzonTemplate возвращает предустановленный шаблон для Ozon
 // Шаблон включает листы: "Шаблон", "Озон.Видео", "Озон.Видеообложка"
 // с номером строки заголовков = 4
+// Для листа "Шаблон" будет применена фильтрация по значению "Shuzzi"
+// Для листов "Озон.Видео" и "Озон.Видеообложка" будет применена фильтрация по артикулам из листа "Шаблон"
 func (m *Manager) GetOzonTemplate() map[string]core.SheetConfig {
 	template := map[string]core.SheetConfig{
 		"Шаблон": {
-			SheetName: "Шаблон",
-			Enabled:   true,
-			HeaderRow: 4,
-			Headers:   []string{},
+			SheetName:    "Шаблон",
+			Enabled:      true,
+			HeaderRow:    4,
+			Headers:      []string{},
+			FilterColumn: -1, // Будет определен автоматически при анализе файла
+			FilterValues: []string{"Shuzzi"},
 		},
 		"Озон.Видео": {
-			SheetName: "Озон.Видео",
-			Enabled:   true,
-			HeaderRow: 4,
-			Headers:   []string{},
+			SheetName:           "Озон.Видео",
+			Enabled:             true,
+			HeaderRow:           4,
+			Headers:             []string{},
+			UseTemplateArticles: true, // Фильтровать по артикулам из листа "Шаблон"
 		},
 		"Озон.Видеообложка": {
-			SheetName: "Озон.Видеообложка",
-			Enabled:   true,
-			HeaderRow: 4,
-			Headers:   []string{},
+			SheetName:           "Озон.Видеообложка",
+			Enabled:             true,
+			HeaderRow:           4,
+			Headers:             []string{},
+			UseTemplateArticles: true, // Фильтровать по артикулам из листа "Шаблон"
 		},
 	}
 

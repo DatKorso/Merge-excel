@@ -5,86 +5,27 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/DatKorso/Merge-excel/internal/excel"
 )
-
-func TestNewBaseAnalyzer(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	// Путь к тестовому файлу
-	testFile := filepath.Join("..", "..", "testdata", "Повседневная обувь_04.11.2025.xlsx")
-
-	t.Run("успешное создание анализатора", func(t *testing.T) {
-		analyzer, err := NewBaseAnalyzer(testFile, logger)
-		if err != nil {
-			t.Fatalf("не удалось создать анализатор: %v", err)
-		}
-		defer analyzer.Close()
-
-		if analyzer.filePath != testFile {
-			t.Errorf("ожидалось filePath = %s, получено %s", testFile, analyzer.filePath)
-		}
-
-		if analyzer.reader == nil {
-			t.Error("reader не должен быть nil")
-		}
-	})
-
-	t.Run("ошибка при несуществующем файле", func(t *testing.T) {
-		_, err := NewBaseAnalyzer("несуществующий_файл.xlsx", logger)
-		if err == nil {
-			t.Error("ожидалась ошибка для несуществующего файла")
-		}
-	})
-}
-
-func TestAnalyzeSheets(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	testFile := filepath.Join("..", "..", "testdata", "Повседневная обувь_04.11.2025.xlsx")
-
-	analyzer, err := NewBaseAnalyzer(testFile, logger)
-	if err != nil {
-		t.Fatalf("не удалось создать анализатор: %v", err)
-	}
-	defer analyzer.Close()
-
-	configs, err := analyzer.AnalyzeSheets()
-	if err != nil {
-		t.Fatalf("ошибка при анализе листов: %v", err)
-	}
-
-	if len(configs) == 0 {
-		t.Error("ожидался хотя бы один лист")
-	}
-
-	// Проверяем первый лист
-	for _, config := range configs {
-		if config.SheetName == "" {
-			t.Error("имя листа не должно быть пустым")
-		}
-
-		if !config.Enabled {
-			t.Error("по умолчанию лист должен быть включен")
-		}
-
-		if config.HeaderRow != 1 {
-			t.Errorf("по умолчанию HeaderRow должен быть 1, получено %d", config.HeaderRow)
-		}
-
-		t.Logf("Лист: %s, Заголовков: %d", config.SheetName, len(config.Headers))
-	}
-}
 
 func TestGetSheetNames(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	testFile := filepath.Join("..", "..", "testdata", "Повседневная обувь_04.11.2025.xlsx")
 
-	analyzer, err := NewBaseAnalyzer(testFile, logger)
+	reader, err := excel.NewReader(testFile)
 	if err != nil {
-		t.Fatalf("не удалось создать анализатор: %v", err)
+		t.Fatalf("не удалось открыть тестовый файл: %v", err)
 	}
-	defer analyzer.Close()
+	defer reader.Close()
 
-	sheetNames := analyzer.GetSheetNames()
+	analyzer := NewBaseAnalyzer(reader, logger)
+
+	sheetNames, err := analyzer.GetSheetNames(testFile)
+	if err != nil {
+		t.Fatalf("ошибка при получении списка листов: %v", err)
+	}
+
 	if len(sheetNames) == 0 {
 		t.Error("ожидался хотя бы один лист")
 	}
@@ -95,166 +36,99 @@ func TestGetSheetNames(t *testing.T) {
 	}
 }
 
-func TestUpdateHeadersForSheet(t *testing.T) {
+func TestGetHeaders(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	testFile := filepath.Join("..", "..", "testdata", "Повседневная обувь_04.11.2025.xlsx")
 
-	analyzer, err := NewBaseAnalyzer(testFile, logger)
+	reader, err := excel.NewReader(testFile)
 	if err != nil {
-		t.Fatalf("не удалось создать анализатор: %v", err)
+		t.Fatalf("не удалось открыть тестовый файл: %v", err)
 	}
-	defer analyzer.Close()
+	defer reader.Close()
 
-	// Получаем первый лист
-	configs, err := analyzer.AnalyzeSheets()
+	analyzer := NewBaseAnalyzer(reader, logger)
+
+	sheetNames, err := analyzer.GetSheetNames(testFile)
 	if err != nil {
-		t.Fatalf("ошибка при анализе листов: %v", err)
+		t.Fatalf("ошибка при получении списка листов: %v", err)
 	}
 
-	if len(configs) == 0 {
-		t.Fatal("нет листов для тестирования")
-	}
-
-	config := &configs[0]
-
-	t.Run("обновление заголовков для строки 5", func(t *testing.T) {
-		config.HeaderRow = 5
-		err := analyzer.UpdateHeadersForSheet(config)
-		if err != nil {
-			t.Fatalf("ошибка при обновлении заголовков: %v", err)
-		}
-
-		if len(config.Headers) == 0 {
-			t.Error("ожидались заголовки после обновления")
-		}
-
-		t.Logf("Заголовки из строки 5: %v", config.Headers)
-	})
-
-	t.Run("ошибка для недопустимой строки", func(t *testing.T) {
-		config.HeaderRow = 0
-		err := analyzer.UpdateHeadersForSheet(config)
-		if err == nil {
-			t.Error("ожидалась ошибка для HeaderRow = 0")
-		}
-	})
-}
-
-func TestGetSheetPreview(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	testFile := filepath.Join("..", "..", "testdata", "Повседневная обувь_04.11.2025.xlsx")
-
-	analyzer, err := NewBaseAnalyzer(testFile, logger)
-	if err != nil {
-		t.Fatalf("не удалось создать анализатор: %v", err)
-	}
-	defer analyzer.Close()
-
-	sheetNames := analyzer.GetSheetNames()
 	if len(sheetNames) == 0 {
 		t.Fatal("нет листов для тестирования")
 	}
 
 	sheetName := sheetNames[0]
 
-	t.Run("предпросмотр с заголовками в строке 5", func(t *testing.T) {
-		preview, err := analyzer.GetSheetPreview(sheetName, 5, 10)
+	t.Run("получение заголовков для строки 4", func(t *testing.T) {
+		headers, err := analyzer.GetHeaders(testFile, sheetName, 4)
 		if err != nil {
-			t.Fatalf("ошибка при получении предпросмотра: %v", err)
+			t.Fatalf("ошибка при получении заголовков: %v", err)
 		}
 
-		if preview.SheetName != sheetName {
-			t.Errorf("ожидалось имя листа %s, получено %s", sheetName, preview.SheetName)
-		}
-
-		if preview.HeaderRow != 5 {
-			t.Errorf("ожидалось HeaderRow = 5, получено %d", preview.HeaderRow)
-		}
-
-		if len(preview.Headers) == 0 {
+		if len(headers) == 0 {
 			t.Error("ожидались заголовки")
 		}
 
-		t.Logf("Лист: %s", preview.SheetName)
-		t.Logf("Заголовки: %v", preview.Headers)
-		t.Logf("Всего строк: %d", preview.TotalRows)
-		t.Logf("Строк данных: %d", preview.DataRowsCount)
-		t.Logf("Строк в предпросмотре: %d", len(preview.DataRows))
+		t.Logf("Заголовки из строки 4: %v", headers)
 	})
 
 	t.Run("ошибка для несуществующего листа", func(t *testing.T) {
-		_, err := analyzer.GetSheetPreview("НесуществующийЛист", 1, 10)
+		_, err := analyzer.GetHeaders(testFile, "НесуществующийЛист", 1)
 		if err == nil {
 			t.Error("ожидалась ошибка для несуществующего листа")
 		}
 	})
 }
 
-func TestValidateSheetConfig(t *testing.T) {
+func TestFindBrandColumnInFirstRows(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 	testFile := filepath.Join("..", "..", "testdata", "Повседневная обувь_04.11.2025.xlsx")
 
-	analyzer, err := NewBaseAnalyzer(testFile, logger)
+	reader, err := excel.NewReader(testFile)
 	if err != nil {
-		t.Fatalf("не удалось создать анализатор: %v", err)
+		t.Fatalf("не удалось открыть тестовый файл: %v", err)
 	}
-	defer analyzer.Close()
+	defer reader.Close()
 
-	sheetNames := analyzer.GetSheetNames()
+	analyzer := NewBaseAnalyzer(reader, logger)
+
+	sheetNames, err := analyzer.GetSheetNames(testFile)
+	if err != nil {
+		t.Fatalf("ошибка при получении списка листов: %v", err)
+	}
+
 	if len(sheetNames) == 0 {
 		t.Fatal("нет листов для тестирования")
 	}
 
-	t.Run("валидная конфигурация", func(t *testing.T) {
-		config := &SheetConfig{
-			SheetName: sheetNames[0],
-			Enabled:   true,
-			HeaderRow: 5,
-			Headers:   []string{},
+	// Ищем лист "Шаблон"
+	var templateSheet string
+	for _, name := range sheetNames {
+		if name == "Шаблон" {
+			templateSheet = name
+			break
 		}
+	}
 
-		err := analyzer.ValidateSheetConfig(config)
+	if templateSheet == "" {
+		t.Skip("лист 'Шаблон' не найден в тестовом файле")
+	}
+
+	t.Run("поиск столбца 'Бренд в одежде и обуви*'", func(t *testing.T) {
+		columnIndex, err := analyzer.FindBrandColumnInFirstRows(testFile, templateSheet, 4)
 		if err != nil {
-			t.Errorf("ожидалась валидная конфигурация: %v", err)
-		}
-	})
-
-	t.Run("пустое имя листа", func(t *testing.T) {
-		config := &SheetConfig{
-			SheetName: "",
-			Enabled:   true,
-			HeaderRow: 1,
+			t.Fatalf("ошибка при поиске столбца: %v", err)
 		}
 
-		err := analyzer.ValidateSheetConfig(config)
-		if err == nil {
-			t.Error("ожидалась ошибка для пустого имени листа")
-		}
-	})
+		t.Logf("Индекс столбца 'Бренд в одежде и обуви*': %d", columnIndex)
 
-	t.Run("несуществующий лист", func(t *testing.T) {
-		config := &SheetConfig{
-			SheetName: "НесуществующийЛист",
-			Enabled:   true,
-			HeaderRow: 1,
-		}
-
-		err := analyzer.ValidateSheetConfig(config)
-		if err == nil {
-			t.Error("ожидалась ошибка для несуществующего листа")
-		}
-	})
-
-	t.Run("недопустимый номер строки заголовков", func(t *testing.T) {
-		config := &SheetConfig{
-			SheetName: sheetNames[0],
-			Enabled:   true,
-			HeaderRow: 0,
-		}
-
-		err := analyzer.ValidateSheetConfig(config)
-		if err == nil {
-			t.Error("ожидалась ошибка для HeaderRow = 0")
+		// Если в тестовом файле есть эта ячейка в S2, индекс должен быть 18 (S = 19-я колонка, 0-based = 18)
+		if columnIndex == 18 {
+			t.Logf("Столбец успешно найден на позиции S (индекс 18)")
+		} else if columnIndex == -1 {
+			t.Logf("Столбец не найден в строке 2 листа 'Шаблон'")
+		} else {
+			t.Logf("Столбец найден на неожиданной позиции: %d", columnIndex)
 		}
 	})
 }

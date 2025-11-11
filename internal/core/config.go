@@ -15,10 +15,13 @@ type Profile struct {
 
 // SheetConfig настройки для одного листа
 type SheetConfig struct {
-	SheetName string   `json:"sheet_name"`
-	Enabled   bool     `json:"enabled"`
-	HeaderRow int      `json:"header_row"` // 1-based index
-	Headers   []string `json:"headers"`
+	SheetName           string   `json:"sheet_name"`
+	Enabled             bool     `json:"enabled"`
+	HeaderRow           int      `json:"header_row"` // 1-based index
+	Headers             []string `json:"headers"`
+	FilterColumn        int      `json:"filter_column,omitempty"`         // 0-based column index для фильтрации (0 = не используется)
+	FilterValues        []string `json:"filter_values,omitempty"`         // Значения для исключения из результата
+	UseTemplateArticles bool     `json:"use_template_articles,omitempty"` // Фильтровать по артикулам из листа "Шаблон" (для Ozon пресета)
 }
 
 // ProfileSettings дополнительные настройки профиля

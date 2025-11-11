@@ -271,6 +271,25 @@ func (t *BaseFileTab) analyzeFile(filePath string) {
 			if config, exists := template[sheet.SheetName]; exists {
 				sheet.Enabled = config.Enabled
 				sheet.HeaderRow = config.HeaderRow
+				sheet.FilterValues = config.FilterValues
+				
+				// Для листа "Шаблон" автоматически определяем столбец фильтрации
+				if sheet.SheetName == "Шаблон" && len(config.FilterValues) > 0 {
+					columnIndex, err := t.app.analyzer.FindBrandColumnInFirstRows(filePath, sheet.SheetName, sheet.HeaderRow)
+					if err != nil {
+						t.app.logger.Warn("не удалось найти столбец бренда для фильтрации", "error", err, "sheet", sheet.SheetName)
+					} else if columnIndex >= 0 {
+						sheet.FilterColumn = columnIndex
+						t.app.logger.Info("автоматически определен столбец фильтрации",
+							"sheet", sheet.SheetName,
+							"column_index", columnIndex,
+							"filter_values", sheet.FilterValues)
+					} else {
+						t.app.logger.Warn("столбец 'Бренд в одежде и обуви*' не найден, фильтрация не будет применена", "sheet", sheet.SheetName)
+						sheet.FilterColumn = -1
+					}
+				}
+				
 				t.app.logger.Debug("applied Ozon template on load", "sheet", sheet.SheetName, "enabled", sheet.Enabled, "header_row", sheet.HeaderRow)
 			}
 		}
@@ -484,13 +503,34 @@ func (t *BaseFileTab) onOzonTemplateToggled(checked bool) {
 // applyOzonTemplate применяет шаблон Ozon к загруженным листам
 func (t *BaseFileTab) applyOzonTemplate() {
 	template := t.app.configManager.GetOzonTemplate()
+	baseFile := t.app.GetBaseFile()
 	
 	for i := range t.sheets {
 		sheet := &t.sheets[i]
 		if config, exists := template[sheet.SheetName]; exists {
 			sheet.Enabled = config.Enabled
 			sheet.HeaderRow = config.HeaderRow
-			t.app.logger.Debug("applied Ozon template", "sheet", sheet.SheetName, "enabled", sheet.Enabled, "header_row", sheet.HeaderRow)
+			sheet.FilterValues = config.FilterValues
+			sheet.UseTemplateArticles = config.UseTemplateArticles
+			
+			// Для листа "Шаблон" автоматически определяем столбец фильтрации
+			if sheet.SheetName == "Шаблон" && len(config.FilterValues) > 0 {
+				columnIndex, err := t.app.analyzer.FindBrandColumnInFirstRows(baseFile, sheet.SheetName, sheet.HeaderRow)
+				if err != nil {
+					t.app.logger.Warn("не удалось найти столбец бренда для фильтрации", "error", err, "sheet", sheet.SheetName)
+				} else if columnIndex >= 0 {
+					sheet.FilterColumn = columnIndex
+					t.app.logger.Info("автоматически определен столбец фильтрации",
+						"sheet", sheet.SheetName,
+						"column_index", columnIndex,
+						"filter_values", sheet.FilterValues)
+				} else {
+					t.app.logger.Warn("столбец 'Бренд в одежде и обуви*' не найден, фильтрация не будет применена", "sheet", sheet.SheetName)
+					sheet.FilterColumn = -1
+				}
+			}
+			
+			t.app.logger.Debug("applied Ozon template", "sheet", sheet.SheetName, "enabled", sheet.Enabled, "header_row", sheet.HeaderRow, "use_template_articles", sheet.UseTemplateArticles)
 		} else {
 			// Листы, не входящие в шаблон, отключаем
 			sheet.Enabled = false

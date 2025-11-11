@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log/slog"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +27,7 @@ type Merger struct {
 	progressCallback ProgressCallback
 	logger           *slog.Logger
 	mu               sync.Mutex
+	templateArticles map[string]bool // Уникальные артикулы из листа "Шаблон" для Ozon пресета
 }
 
 // NewMerger создает новый объединитель файлов
@@ -102,14 +104,44 @@ func (m *Merger) MergeFiles(baseFilePath string, filePaths []string, sheetConfig
 	writer := excel.NewWriter()
 	result.WorkbookData = writer
 
+	// Инициализируем карту для артикулов
+	m.templateArticles = make(map[string]bool)
+
 	// Вычисляем общее количество операций для прогресса
 	// +1 для базового файла
 	totalFiles := 1 + len(filePaths)
 	totalOperations := len(sheetConfigs) * totalFiles
 	currentOperation := 0
 
-	// Обрабатываем каждый лист
+	// Сначала обрабатываем лист "Шаблон", если он есть (для Ozon пресета)
+	templateConfig, hasTemplate := sheetConfigs["Шаблон"]
+	if hasTemplate && templateConfig.Enabled {
+		m.logger.Info("обработка листа", "sheet", "Шаблон")
+
+		rowsMerged, warnings, err := m.mergeSheetWithWriter(writer, "Шаблон", templateConfig, baseFilePath, filePaths, &currentOperation, totalOperations)
+		if err != nil {
+			writer.Close()
+			return nil, fmt.Errorf("ошибка при обработке листа '%s': %w", "Шаблон", err)
+		}
+
+		result.SheetStats["Шаблон"] = &SheetStat{
+			RowsMerged: rowsMerged,
+			FilesCount: totalFiles,
+		}
+		result.TotalRows += rowsMerged
+		result.Warnings = append(result.Warnings, warnings...)
+		result.ProcessedSheets++
+
+		m.logger.Info("лист 'Шаблон' обработан, извлечено артикулов", "count", len(m.templateArticles))
+	}
+
+	// Обрабатываем остальные листы
 	for sheetName, sheetConfig := range sheetConfigs {
+		// Пропускаем уже обработанный лист "Шаблон"
+		if sheetName == "Шаблон" {
+			continue
+		}
+
 		if !sheetConfig.Enabled {
 			continue
 		}
@@ -294,6 +326,82 @@ func (m *Merger) mergeSheetWithWriter(
 		// Фильтруем пустые строки
 		dataRows = filterEmptyRows(dataRows)
 
+		// Применяем фильтрацию по значению столбца, если настроена
+		if config.FilterColumn >= 0 && len(config.FilterValues) > 0 {
+			beforeFilter := len(dataRows)
+			
+			// DEBUG: Собираем уникальные значения в столбце для логирования
+			uniqueValues := make(map[string]int)
+			for _, row := range dataRows {
+				if config.FilterColumn < len(row) {
+					val := row[config.FilterColumn]
+					uniqueValues[val]++
+				}
+			}
+			
+			dataRows = filterRowsByColumnValue(dataRows, config.FilterColumn, config.FilterValues)
+			afterFilter := len(dataRows)
+			excludedCount := beforeFilter - afterFilter
+			
+			m.logger.Info("применена фильтрация по столбцу",
+				"file", filepath.Base(filePath),
+				"sheet", sheetName,
+				"before_filter", beforeFilter,
+				"after_filter", afterFilter,
+				"excluded_count", excludedCount,
+				"kept_values", config.FilterValues,
+				"column_index", config.FilterColumn,
+				"unique_brands_before_filter", uniqueValues,
+			)
+		}
+
+		// Для листа "Шаблон" извлекаем артикулы после фильтрации (для Ozon пресета)
+		if sheetName == "Шаблон" && len(dataRows) > 0 {
+			// Получаем заголовки
+			var headerRow []string
+			if config.HeaderRow > 0 && len(baseRows) >= config.HeaderRow {
+				headerRow = baseRows[config.HeaderRow-1]
+			}
+			
+			// Извлекаем артикулы из обработанных строк
+			articles := extractArticlesFromRows(headerRow, dataRows)
+			
+			// Добавляем артикулы в общую карту
+			for article := range articles {
+				m.templateArticles[article] = true
+			}
+			
+			m.logger.Info("извлечены артикулы из листа Шаблон",
+				"file", filepath.Base(filePath),
+				"articles_count", len(articles),
+				"total_articles", len(m.templateArticles),
+			)
+		}
+
+		// Применяем фильтрацию по артикулам из листа "Шаблон", если настроена
+		if config.UseTemplateArticles && len(m.templateArticles) > 0 && len(dataRows) > 0 {
+			beforeFilter := len(dataRows)
+			
+			// Получаем заголовки
+			var headerRow []string
+			if config.HeaderRow > 0 && len(baseRows) >= config.HeaderRow {
+				headerRow = baseRows[config.HeaderRow-1]
+			}
+			
+			dataRows = filterRowsByArticles(headerRow, dataRows, m.templateArticles)
+			afterFilter := len(dataRows)
+			excludedCount := beforeFilter - afterFilter
+			
+			m.logger.Info("применена фильтрация по артикулам из листа Шаблон",
+				"file", filepath.Base(filePath),
+				"sheet", sheetName,
+				"before_filter", beforeFilter,
+				"after_filter", afterFilter,
+				"excluded_count", excludedCount,
+				"template_articles_count", len(m.templateArticles),
+			)
+		}
+
 		// Записываем данные в результирующий файл
 		if len(dataRows) > 0 {
 			if err := writer.WriteRows(sheetName, currentRow, dataRows); err != nil {
@@ -336,3 +444,119 @@ func filterEmptyRows(rows [][]string) [][]string {
 
 	return filtered
 }
+
+// filterRowsByColumnValue фильтрует строки, оставляя только те, где значение в указанном столбце совпадает с одним из заданных значений
+func filterRowsByColumnValue(rows [][]string, columnIndex int, filterValues []string) [][]string {
+	if columnIndex < 0 || len(filterValues) == 0 {
+		return rows
+	}
+
+	// Нормализуем значения для фильтрации: trim + lowercase
+	normalizedFilterValues := make([]string, len(filterValues))
+	for i, val := range filterValues {
+		normalizedFilterValues[i] = strings.ToLower(strings.TrimSpace(val))
+	}
+
+	filtered := make([][]string, 0, len(rows))
+
+	for _, row := range rows {
+		// Проверяем, что столбец существует в строке
+		if columnIndex >= len(row) {
+			// Если столбца нет, исключаем строку
+			continue
+		}
+
+		// Нормализуем значение ячейки: trim + lowercase
+		cellValue := strings.ToLower(strings.TrimSpace(row[columnIndex]))
+		shouldKeep := false
+
+		// Проверяем, совпадает ли значение ячейки с одним из нужных значений
+		for _, filterValue := range normalizedFilterValues {
+			if cellValue == filterValue {
+				shouldKeep = true
+				break
+			}
+		}
+
+		// Оставляем только строки с нужными значениями
+		if shouldKeep {
+			filtered = append(filtered, row)
+		}
+	}
+
+	return filtered
+}
+
+// extractArticlesFromRows извлекает уникальные артикулы из строк данных
+// headerRow - строка заголовков (обычно строка 2)
+// dataRows - строки данных
+// Возвращает map с уникальными артикулами для быстрого поиска
+func extractArticlesFromRows(headerRow []string, dataRows [][]string) map[string]bool {
+	articles := make(map[string]bool)
+
+	// Ищем столбец "Артикул*" в заголовках
+	articleColIndex := -1
+	for i, header := range headerRow {
+		if strings.Contains(strings.ToLower(header), "артикул") {
+			articleColIndex = i
+			break
+		}
+	}
+
+	// Если столбец не найден, возвращаем пустой map
+	if articleColIndex == -1 {
+		return articles
+	}
+
+	// Извлекаем уникальные артикулы
+	for _, row := range dataRows {
+		if articleColIndex < len(row) {
+			article := strings.TrimSpace(row[articleColIndex])
+			if article != "" {
+				articles[article] = true
+			}
+		}
+	}
+
+	return articles
+}
+
+// filterRowsByArticles фильтрует строки по списку артикулов
+// headerRow - строка заголовков
+// dataRows - строки данных для фильтрации
+// articles - map с разрешенными артикулами
+// Возвращает только строки, артикулы которых есть в articles
+func filterRowsByArticles(headerRow []string, dataRows [][]string, articles map[string]bool) [][]string {
+	if len(articles) == 0 {
+		// Если артикулов нет, возвращаем пустой массив
+		return [][]string{}
+	}
+
+	// Ищем столбец "Артикул*" в заголовках
+	articleColIndex := -1
+	for i, header := range headerRow {
+		if strings.Contains(strings.ToLower(header), "артикул") {
+			articleColIndex = i
+			break
+		}
+	}
+
+	// Если столбец не найден, возвращаем пустой массив
+	if articleColIndex == -1 {
+		return [][]string{}
+	}
+
+	// Фильтруем строки
+	filtered := make([][]string, 0, len(dataRows))
+	for _, row := range dataRows {
+		if articleColIndex < len(row) {
+			article := strings.TrimSpace(row[articleColIndex])
+			if articles[article] {
+				filtered = append(filtered, row)
+			}
+		}
+	}
+
+	return filtered
+}
+

@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/DatKorso/Merge-excel/internal/excel"
 )
 
 func TestNewMerger(t *testing.T) {
@@ -35,36 +37,43 @@ func TestMergeFiles(t *testing.T) {
 	}
 
 	// Создаем анализатор для получения конфигурации
-	analyzer := NewBaseAnalyzer(nil, logger)
-	defer analyzer.Close()
+	reader, err := excel.NewReader(testFile1)
+	if err != nil {
+		t.Fatalf("не удалось открыть тестовый файл: %v", err)
+	}
+	defer reader.Close()
 
-	if err := analyzer.AnalyzeFile(testFile1); err != nil {
-		t.Fatalf("не удалось проанализировать файл: %v", err)
+	analyzer := NewBaseAnalyzer(reader, logger)
+
+	// Получаем список листов
+	sheetNames, err := analyzer.GetSheetNames(testFile1)
+	if err != nil {
+		t.Fatalf("не удалось получить список листов: %v", err)
 	}
 
-	// Получаем конфигурацию листов
-	configs := analyzer.GetSheetConfigs()
-	if len(configs) == 0 {
+	if len(sheetNames) == 0 {
 		t.Fatal("нет листов для тестирования")
 	}
 
-	// Устанавливаем правильный номер строки заголовков (строка 5 для тестовых файлов)
-	// Но обрабатываем только листы с достаточным количеством строк
+	// Создаем конфигурацию для первого листа
 	sheetConfigs := make(map[string]*SheetConfig)
-	for i := range configs {
-		// Пытаемся установить строку 5, если не получается - пропускаем этот лист
-		configs[i].HeaderRow = 5
-		configs[i].Enabled = true
-		if err := analyzer.UpdateHeadersForSheet(&configs[i]); err != nil {
-			t.Logf("Пропускаем лист '%s': %v", configs[i].SheetName, err)
-			continue
-		}
-		sheetConfigs[configs[i].SheetName] = &configs[i]
+	sheetName := sheetNames[0]
+
+	config := &SheetConfig{
+		SheetName: sheetName,
+		Enabled:   true,
+		HeaderRow: 4, // Строка 4 для тестовых файлов
+		Headers:   []string{},
 	}
-	
-	if len(sheetConfigs) == 0 {
-		t.Skip("нет листов с достаточным количеством строк для тестирования")
+
+	// Получаем заголовки
+	headers, err := analyzer.GetHeaders(testFile1, sheetName, 4)
+	if err != nil {
+		t.Fatalf("не удалось получить заголовки: %v", err)
 	}
+
+	config.Headers = headers
+	sheetConfigs[sheetName] = config
 
 	// Создаем merger
 	merger := NewMerger(nil, logger)
@@ -116,6 +125,11 @@ func TestMergeFiles(t *testing.T) {
 
 	for _, warning := range result.Warnings {
 		t.Logf("Предупреждение: %s", warning)
+	}
+
+	// Очистка
+	if result.WorkbookData != nil {
+		result.WorkbookData.Close()
 	}
 }
 
@@ -190,6 +204,250 @@ func TestFilterEmptyRows(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result := filterEmptyRows(tt.input)
+			if len(result) != tt.expected {
+				t.Errorf("ожидалось %d строк, получено %d", tt.expected, len(result))
+			}
+		})
+	}
+}
+
+func TestFilterRowsByColumnValue(t *testing.T) {
+	tests := []struct {
+		name         string
+		input        [][]string
+		columnIndex  int
+		filterValues []string
+		expected     int
+	}{
+		{
+			name: "оставляем только Shuzzi",
+			input: [][]string{
+				{"A", "Shuzzi", "C"},
+				{"B", "Other", "D"},
+				{"E", "Shuzzi", "F"},
+			},
+			columnIndex:  1,
+			filterValues: []string{"Shuzzi"},
+			expected:     2, // Только строки с "Shuzzi"
+		},
+		{
+			name: "фильтрация с разным регистром",
+			input: [][]string{
+				{"A", "shuzzi", "C"},
+				{"B", "SHUZZI", "D"},
+				{"E", "Other", "F"},
+			},
+			columnIndex:  1,
+			filterValues: []string{"Shuzzi"},
+			expected:     2, // Только строки с "shuzzi" и "SHUZZI"
+		},
+		{
+			name: "фильтрация с пробелами",
+			input: [][]string{
+				{"A", " Shuzzi ", "C"},
+				{"B", "Shuzzi", "D"},
+				{"E", "Other", "F"},
+			},
+			columnIndex:  1,
+			filterValues: []string{"Shuzzi"},
+			expected:     2, // Только строки с "Shuzzi"
+		},
+		{
+			name: "оставляем несколько значений",
+			input: [][]string{
+				{"A", "Value1", "C"},
+				{"B", "Value2", "D"},
+				{"E", "Value3", "F"},
+			},
+			columnIndex:  1,
+			filterValues: []string{"Value1", "Value3"},
+			expected:     2, // Строки с "Value1" и "Value3"
+		},
+		{
+			name: "нет совпадений",
+			input: [][]string{
+				{"A", "Keep1", "C"},
+				{"B", "Keep2", "D"},
+			},
+			columnIndex:  1,
+			filterValues: []string{"NotFound"},
+			expected:     0, // Ни одна строка не подходит
+		},
+		{
+			name: "отрицательный индекс колонки",
+			input: [][]string{
+				{"A", "B", "C"},
+				{"D", "E", "F"},
+			},
+			columnIndex:  -1,
+			filterValues: []string{"B"},
+			expected:     2, // Фильтрация не применяется
+		},
+		{
+			name: "пустой список значений для фильтрации",
+			input: [][]string{
+				{"A", "B", "C"},
+				{"D", "E", "F"},
+			},
+			columnIndex:  1,
+			filterValues: []string{},
+			expected:     2, // Фильтрация не применяется
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterRowsByColumnValue(tt.input, tt.columnIndex, tt.filterValues)
+			if len(result) != tt.expected {
+				t.Errorf("ожидалось %d строк, получено %d", tt.expected, len(result))
+			}
+		})
+	}
+}
+
+func TestExtractArticlesFromRows(t *testing.T) {
+	tests := []struct {
+		name       string
+		headerRow  []string
+		dataRows   [][]string
+		expected   map[string]bool
+	}{
+		{
+			name:      "извлечение артикулов",
+			headerRow: []string{"Название", "Артикул*", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", "ART-001", "1000"},
+				{"Товар 2", "ART-002", "2000"},
+				{"Товар 3", "ART-001", "1500"}, // Дубликат
+			},
+			expected: map[string]bool{
+				"ART-001": true,
+				"ART-002": true,
+			},
+		},
+		{
+			name:      "артикул с пробелами",
+			headerRow: []string{"Название", "Артикул*", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", " ART-001 ", "1000"},
+				{"Товар 2", "ART-002", "2000"},
+			},
+			expected: map[string]bool{
+				"ART-001": true,
+				"ART-002": true,
+			},
+		},
+		{
+			name:      "столбец артикул не найден",
+			headerRow: []string{"Название", "Код", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", "CODE-001", "1000"},
+			},
+			expected: map[string]bool{},
+		},
+		{
+			name:      "пустые артикулы игнорируются",
+			headerRow: []string{"Название", "Артикул*", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", "ART-001", "1000"},
+				{"Товар 2", "", "2000"},
+				{"Товар 3", "  ", "1500"},
+			},
+			expected: map[string]bool{
+				"ART-001": true,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractArticlesFromRows(tt.headerRow, tt.dataRows)
+			
+			if len(result) != len(tt.expected) {
+				t.Errorf("ожидалось %d артикулов, получено %d", len(tt.expected), len(result))
+			}
+			
+			for article := range tt.expected {
+				if !result[article] {
+					t.Errorf("артикул '%s' не найден в результате", article)
+				}
+			}
+		})
+	}
+}
+
+func TestFilterRowsByArticles(t *testing.T) {
+	tests := []struct {
+		name      string
+		headerRow []string
+		dataRows  [][]string
+		articles  map[string]bool
+		expected  int
+	}{
+		{
+			name:      "фильтрация по артикулам",
+			headerRow: []string{"Название", "Артикул*", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", "ART-001", "1000"},
+				{"Товар 2", "ART-002", "2000"},
+				{"Товар 3", "ART-003", "1500"},
+			},
+			articles: map[string]bool{
+				"ART-001": true,
+				"ART-003": true,
+			},
+			expected: 2,
+		},
+		{
+			name:      "фильтрация с пробелами в артикулах",
+			headerRow: []string{"Название", "Артикул*", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", " ART-001 ", "1000"},
+				{"Товар 2", "ART-002", "2000"},
+			},
+			articles: map[string]bool{
+				"ART-001": true,
+			},
+			expected: 1,
+		},
+		{
+			name:      "пустой список артикулов",
+			headerRow: []string{"Название", "Артикул*", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", "ART-001", "1000"},
+				{"Товар 2", "ART-002", "2000"},
+			},
+			articles: map[string]bool{},
+			expected: 0,
+		},
+		{
+			name:      "столбец артикул не найден",
+			headerRow: []string{"Название", "Код", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", "CODE-001", "1000"},
+			},
+			articles: map[string]bool{
+				"CODE-001": true,
+			},
+			expected: 0,
+		},
+		{
+			name:      "нет совпадений",
+			headerRow: []string{"Название", "Артикул*", "Цена"},
+			dataRows: [][]string{
+				{"Товар 1", "ART-001", "1000"},
+				{"Товар 2", "ART-002", "2000"},
+			},
+			articles: map[string]bool{
+				"ART-999": true,
+			},
+			expected: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := filterRowsByArticles(tt.headerRow, tt.dataRows, tt.articles)
 			if len(result) != tt.expected {
 				t.Errorf("ожидалось %d строк, получено %d", tt.expected, len(result))
 			}
