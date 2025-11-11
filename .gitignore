@@ -9,3 +9,7 @@
 
 # Macos 
 .DS_Store
+
+# Build files
+excel-merger
+excel-merger.exe
