@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/korso/merge-excel/internal/core"
+	"github.com/DatKorso/Merge-excel/internal/core"
 )
 
 func TestNewManager(t *testing.T) {

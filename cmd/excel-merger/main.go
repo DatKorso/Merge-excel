@@ -1,20 +1,18 @@
 package main
 
 import (
-	"log"
-	"os"
-	"path/filepath"
+"log"
+"os"
+"path/filepath"
 
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/app"
-	"fyne.io/fyne/v2/widget"
-
-	"github.com/korso/merge-excel/internal/logger"
+"github.com/DatKorso/Merge-excel/internal/config"
+"github.com/DatKorso/Merge-excel/internal/gui"
+"github.com/DatKorso/Merge-excel/internal/logger"
 )
 
 const (
-	appVersion = "0.1.0-alpha"
-	appID      = "com.github.excel-merger"
+appVersion = "0.1.0-alpha"
+appID      = "com.github.excel-merger"
 )
 
 func main() {
@@ -31,27 +29,23 @@ func main() {
 	}
 
 	appLogger.Info("Excel Merger запущен", 
-		"version", appVersion,
-		"log_file", logCfg.LogFile,
-	)
+"version", appVersion,
+"log_file", logCfg.LogFile,
+)
 
-	// Создание Fyne приложения
-	myApp := app.NewWithID(appID)
-	myWindow := myApp.NewWindow("Excel Merger v" + appVersion)
+	// Инициализация config manager
+	configManager, err := config.NewManager(appLogger)
+	if err != nil {
+		log.Fatalf("Ошибка при инициализации config manager: %v", err)
+	}
 
-	// Временное содержимое (будет заменено на GUI из internal/gui)
-	content := widget.NewLabel("Excel Merger запущен!\nГлавное окно будет реализовано на следующем этапе.")
-
-	myWindow.SetContent(content)
-	myWindow.Resize(fyne.NewSize(800, 600))
+	// Создание и запуск GUI приложения
+	application := gui.NewApp(appLogger, configManager)
 	
-	// Логирование закрытия приложения
-	myWindow.SetOnClosed(func() {
-		appLogger.Info("Excel Merger завершен")
-	})
-
-	appLogger.Info("GUI инициализирован, отображаю окно")
-	myWindow.ShowAndRun()
+	appLogger.Info("GUI инициализирован, запускаю приложение")
+	application.Run()
+	
+	appLogger.Info("Excel Merger завершен")
 }
 
 // initAppDirectories создает необходимые директории при первом запуске

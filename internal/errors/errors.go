@@ -112,8 +112,16 @@ func NewFileCorruptedError(path string, err error) *AppError {
 	}
 }
 
-// NewConfigError создает ошибку конфигурации
-func NewConfigError(message string, err error) *AppError {
+// NewConfigError создает ошибку конфигурации (с одним параметром для совместимости)
+func NewConfigError(message string) *AppError {
+	return &AppError{
+		Code:    ErrCodeConfigError,
+		Message: message,
+	}
+}
+
+// NewConfigErrorWithCause создает ошибку конфигурации с причиной
+func NewConfigErrorWithCause(message string, err error) *AppError {
 	return &AppError{
 		Code:    ErrCodeConfigError,
 		Message: message,
@@ -140,23 +148,24 @@ func NewSaveError(path string, err error) *AppError {
 	}
 }
 
+// UserMessages содержит понятные пользователю сообщения об ошибках
+var UserMessages = map[string]string{
+	ErrCodeFileNotFound:     "Файл не найден. Пожалуйста, проверьте путь к файлу.",
+	ErrCodeFileReadError:    "Не удалось прочитать файл. Возможно, он поврежден или открыт в другой программе.",
+	ErrCodeSheetNotFound:    "Указанный лист не найден в файле. Проверьте настройки.",
+	ErrCodeInvalidHeaderRow: "Неверный номер строки заголовков. Укажите значение от 1 и выше.",
+	ErrCodeEmptyFile:        "Файл пустой или не содержит данных.",
+	ErrCodeInvalidFormat:    "Неверный формат файла. Поддерживаются только .xlsx файлы.",
+	ErrCodePermissionDenied: "Нет доступа к файлу. Проверьте права доступа.",
+	ErrCodeFileCorrupted:    "Файл поврежден и не может быть прочитан.",
+	ErrCodeConfigError:      "Ошибка конфигурации. Проверьте настройки профиля.",
+	ErrCodeMergeError:       "Ошибка при объединении файлов. Проверьте логи.",
+	ErrCodeSaveError:        "Не удалось сохранить файл. Проверьте путь и права доступа.",
+}
+
 // UserMessage возвращает понятное пользователю сообщение об ошибке
 func UserMessage(code string) string {
-	messages := map[string]string{
-		ErrCodeFileNotFound:     "Файл не найден. Пожалуйста, проверьте путь к файлу.",
-		ErrCodeFileReadError:    "Не удалось прочитать файл. Возможно, он поврежден или открыт в другой программе.",
-		ErrCodeSheetNotFound:    "Указанный лист не найден в файле. Проверьте настройки.",
-		ErrCodeInvalidHeaderRow: "Неверный номер строки заголовков. Укажите значение от 1 и выше.",
-		ErrCodeEmptyFile:        "Файл пустой или не содержит данных.",
-		ErrCodeInvalidFormat:    "Неверный формат файла. Поддерживаются только .xlsx файлы.",
-		ErrCodePermissionDenied: "Нет доступа к файлу. Проверьте права доступа.",
-		ErrCodeFileCorrupted:    "Файл поврежден и не может быть прочитан.",
-		ErrCodeConfigError:      "Ошибка конфигурации. Проверьте настройки профиля.",
-		ErrCodeMergeError:       "Ошибка при объединении файлов. Проверьте логи.",
-		ErrCodeSaveError:        "Не удалось сохранить файл. Проверьте путь и права доступа.",
-	}
-
-	if msg, exists := messages[code]; exists {
+	if msg, exists := UserMessages[code]; exists {
 		return msg
 	}
 	return "Произошла неизвестная ошибка"

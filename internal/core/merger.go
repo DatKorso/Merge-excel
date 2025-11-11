@@ -5,31 +5,38 @@ import (
 	"log/slog"
 	"path/filepath"
 	"sync"
+	"time"
 
-	"github.com/korso/merge-excel/internal/excel"
-	apperrors "github.com/korso/merge-excel/internal/errors"
+	"github.com/DatKorso/Merge-excel/internal/excel"
 )
 
 // ProgressCallback функция обратного вызова для обновления прогресса
 type ProgressCallback func(current, total int, message string)
 
+// ProgressUpdate информация об обновлении прогресса
+type ProgressUpdate struct {
+	Current int    // Текущий шаг
+	Total   int    // Всего шагов
+	Message string // Сообщение о текущей операции
+}
+
 // Merger выполняет объединение данных из нескольких Excel файлов
 type Merger struct {
-	profile          *Profile
+	reader           *excel.Reader
 	progressCallback ProgressCallback
 	logger           *slog.Logger
 	mu               sync.Mutex
 }
 
 // NewMerger создает новый объединитель файлов
-func NewMerger(profile *Profile, logger *slog.Logger) *Merger {
+func NewMerger(reader *excel.Reader, logger *slog.Logger) *Merger {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return &Merger{
-		profile: profile,
-		logger:  logger,
+		reader: reader,
+		logger: logger,
 	}
 }
 
@@ -53,66 +60,75 @@ func (m *Merger) notifyProgress(current, total int, message string) {
 
 // MergeResult результат объединения файлов
 type MergeResult struct {
-	SheetData       map[string][][]string // Данные по листам: sheet_name -> rows
-	TotalFiles      int                   // Общее количество обработанных файлов
-	TotalRows       int                   // Общее количество объединенных строк
-	ProcessedSheets int                   // Количество обработанных листов
-	Warnings        []string              // Предупреждения при обработке
+	WorkbookData    interface{}            // Данные workbook для сохранения
+	ProcessedFiles  int                    // Общее количество обработанных файлов
+	ProcessedSheets int                    // Количество обработанных листов
+	TotalRows       int                    // Общее количество объединенных строк
+	SheetStats      map[string]*SheetStat  // Статистика по листам
+	Duration        time.Duration          // Время выполнения
+	Warnings        []string               // Предупреждения при обработке
 }
 
-// MergeFiles объединяет несколько Excel файлов согласно профилю
-func (m *Merger) MergeFiles(filePaths []string) (*MergeResult, error) {
+// SheetStat статистика по листу
+type SheetStat struct {
+	RowsMerged int
+	FilesCount int
+}
+
+// MergeFiles объединяет несколько Excel файлов согласно конфигурации
+func (m *Merger) MergeFiles(filePaths []string, sheetConfigs map[string]*SheetConfig) (*MergeResult, error) {
 	if len(filePaths) == 0 {
 		return nil, fmt.Errorf("список файлов для объединения пуст")
 	}
 
-	// Валидируем профиль
-	if err := m.profile.Validate(); err != nil {
-		return nil, fmt.Errorf("профиль невалиден: %w", err)
+	if len(sheetConfigs) == 0 {
+		return nil, fmt.Errorf("нет листов для обработки")
 	}
 
 	m.logger.Info("начало объединения файлов",
 		"files_count", len(filePaths),
-		"profile", m.profile.ProfileName,
+		"sheets_count", len(sheetConfigs),
 	)
 
 	result := &MergeResult{
-		SheetData: make(map[string][][]string),
-		Warnings:  []string{},
-	}
-
-	// Получаем список включенных листов
-	enabledSheets := m.profile.GetEnabledSheets()
-	if len(enabledSheets) == 0 {
-		return nil, fmt.Errorf("нет включенных листов для обработки")
+		SheetStats: make(map[string]*SheetStat),
+		Warnings:   []string{},
 	}
 
 	// Вычисляем общее количество операций для прогресса
-	totalOperations := len(enabledSheets) * len(filePaths)
+	totalOperations := len(sheetConfigs) * len(filePaths)
 	currentOperation := 0
 
-	// Обрабатываем каждый лист
-	for _, sheetConfig := range enabledSheets {
-		m.logger.Info("обработка листа", "sheet", sheetConfig.SheetName)
+	// Создаем новую книгу для результата (используем первый файл как шаблон)
+	// Пока оставим WorkbookData как placeholder - его заполнит writer
+	// В реальной реализации здесь будет excelize.File
 
-		sheetData, warnings, err := m.mergeSheet(sheetConfig, filePaths, &currentOperation, totalOperations)
-		if err != nil {
-			return nil, fmt.Errorf("ошибка при обработке листа '%s': %w", sheetConfig.SheetName, err)
+	// Обрабатываем каждый лист
+	for sheetName, sheetConfig := range sheetConfigs {
+		if !sheetConfig.Enabled {
+			continue
 		}
 
-		result.SheetData[sheetConfig.SheetName] = sheetData
+		m.logger.Info("обработка листа", "sheet", sheetName)
+
+		rowsMerged, warnings, err := m.mergeSheet(sheetName, sheetConfig, filePaths, &currentOperation, totalOperations)
+		if err != nil {
+			return nil, fmt.Errorf("ошибка при обработке листа '%s': %w", sheetName, err)
+		}
+
+		result.SheetStats[sheetName] = &SheetStat{
+			RowsMerged: rowsMerged,
+			FilesCount: len(filePaths),
+		}
+		result.TotalRows += rowsMerged
 		result.Warnings = append(result.Warnings, warnings...)
 		result.ProcessedSheets++
 	}
 
-	// Подсчитываем общую статистику
-	result.TotalFiles = len(filePaths)
-	for _, rows := range result.SheetData {
-		result.TotalRows += len(rows)
-	}
+	result.ProcessedFiles = len(filePaths)
 
 	m.logger.Info("объединение завершено",
-		"total_files", result.TotalFiles,
+		"processed_files", result.ProcessedFiles,
 		"total_rows", result.TotalRows,
 		"processed_sheets", result.ProcessedSheets,
 		"warnings_count", len(result.Warnings),
@@ -123,21 +139,20 @@ func (m *Merger) MergeFiles(filePaths []string) (*MergeResult, error) {
 
 // mergeSheet объединяет один лист из всех файлов
 func (m *Merger) mergeSheet(
-	config SheetConfig,
+	sheetName string,
+	config *SheetConfig,
 	filePaths []string,
 	currentOp *int,
 	totalOps int,
-) ([][]string, []string, error) {
-	var allRows [][]string
+) (int, []string, error) {
 	var warnings []string
-	var headers []string
-	headersSet := false
+	rowsMerged := 0
 
 	for i, filePath := range filePaths {
 		*currentOp++
 		m.notifyProgress(*currentOp, totalOps,
 			fmt.Sprintf("Обработка %s, лист %s (%d/%d)",
-				filepath.Base(filePath), config.SheetName, i+1, len(filePaths)))
+				filepath.Base(filePath), sheetName, i+1, len(filePaths)))
 
 		// Открываем файл
 		reader, err := excel.NewReader(filePath)
@@ -149,46 +164,16 @@ func (m *Merger) mergeSheet(
 		}
 
 		// Проверяем наличие листа
-		if !reader.SheetExists(config.SheetName) {
-			warning := fmt.Sprintf("лист '%s' не найден в файле %s", config.SheetName, filepath.Base(filePath))
+		if !reader.SheetExists(sheetName) {
+			warning := fmt.Sprintf("лист '%s' не найден в файле %s", sheetName, filepath.Base(filePath))
 			warnings = append(warnings, warning)
-			m.logger.Warn(warning, "file", filePath, "sheet", config.SheetName)
+			m.logger.Warn(warning, "file", filePath, "sheet", sheetName)
 			reader.Close()
 			continue
 		}
 
-		// Валидируем структуру (только если заголовки уже установлены)
-		if headersSet && len(config.Headers) > 0 {
-			if err := reader.ValidateStructure(config.SheetName, config.HeaderRow, config.Headers); err != nil {
-				warning := fmt.Sprintf("структура файла %s не совпадает с базовым: %v",
-					filepath.Base(filePath), err)
-				warnings = append(warnings, warning)
-				m.logger.Warn(warning, "file", filePath, "error", err)
-				reader.Close()
-				continue
-			}
-		}
-
-		// Получаем заголовки из первого файла
-		if !headersSet {
-			h, err := reader.GetHeaderRow(config.SheetName, config.HeaderRow)
-			if err != nil {
-				warning := fmt.Sprintf("не удалось прочитать заголовки из %s: %v",
-					filepath.Base(filePath), err)
-				warnings = append(warnings, warning)
-				m.logger.Warn(warning, "file", filePath, "error", err)
-				reader.Close()
-				continue
-			}
-			headers = h
-			headersSet = true
-
-			// Добавляем заголовки как первую строку результата
-			allRows = append(allRows, headers)
-		}
-
 		// Получаем строки данных (без заголовков)
-		dataRows, err := reader.GetDataRows(config.SheetName, config.HeaderRow)
+		dataRows, err := reader.GetDataRows(sheetName, config.HeaderRow)
 		if err != nil {
 			warning := fmt.Sprintf("не удалось прочитать данные из %s: %v",
 				filepath.Base(filePath), err)
@@ -198,32 +183,20 @@ func (m *Merger) mergeSheet(
 			continue
 		}
 
-		// Фильтруем пустые строки если включена настройка
-		if m.profile.Settings.SkipEmptyRows {
-			dataRows = filterEmptyRows(dataRows)
-		}
-
-		// Добавляем данные
-		allRows = append(allRows, dataRows...)
+		// Фильтруем пустые строки
+		dataRows = filterEmptyRows(dataRows)
+		rowsMerged += len(dataRows)
 
 		m.logger.Info("файл обработан",
 			"file", filepath.Base(filePath),
-			"sheet", config.SheetName,
+			"sheet", sheetName,
 			"rows_added", len(dataRows),
 		)
 
 		reader.Close()
 	}
 
-	// Проверяем, что получили хотя бы заголовки
-	if len(allRows) == 0 {
-		return nil, warnings, &apperrors.AppError{
-			Code:    apperrors.ErrCodeMergeError,
-			Message: fmt.Sprintf("не удалось получить данные для листа '%s'", config.SheetName),
-		}
-	}
-
-	return allRows, warnings, nil
+	return rowsMerged, warnings, nil
 }
 
 // filterEmptyRows фильтрует полностью пустые строки
@@ -245,54 +218,4 @@ func filterEmptyRows(rows [][]string) [][]string {
 	}
 
 	return filtered
-}
-
-// ValidateFiles проверяет все файлы перед объединением
-func (m *Merger) ValidateFiles(filePaths []string) error {
-	if len(filePaths) == 0 {
-		return fmt.Errorf("список файлов пуст")
-	}
-
-	for i, filePath := range filePaths {
-		m.logger.Info("валидация файла", "file", filepath.Base(filePath), "index", i+1)
-
-		reader, err := excel.NewReader(filePath)
-		if err != nil {
-			return fmt.Errorf("файл %s недоступен: %w", filepath.Base(filePath), err)
-		}
-
-		if err := reader.ValidateFile(); err != nil {
-			reader.Close()
-			return fmt.Errorf("файл %s невалиден: %w", filepath.Base(filePath), err)
-		}
-
-		reader.Close()
-	}
-
-	m.logger.Info("все файлы валидны", "count", len(filePaths))
-	return nil
-}
-
-// GetStats возвращает статистику по профилю
-func (m *Merger) GetStats() map[string]interface{} {
-	enabledSheets := m.profile.GetEnabledSheets()
-
-	return map[string]interface{}{
-		"profile_name":         m.profile.ProfileName,
-		"base_file":            m.profile.BaseFileName,
-		"total_sheets":         len(m.profile.Sheets),
-		"enabled_sheets":       len(enabledSheets),
-		"skip_empty_rows":      m.profile.Settings.SkipEmptyRows,
-		"show_warnings":        m.profile.Settings.ShowWarnings,
-		"enabled_sheet_names":  getSheetNames(enabledSheets),
-	}
-}
-
-// getSheetNames извлекает имена листов из конфигураций
-func getSheetNames(configs []SheetConfig) []string {
-	names := make([]string, len(configs))
-	for i, config := range configs {
-		names[i] = config.SheetName
-	}
-	return names
 }

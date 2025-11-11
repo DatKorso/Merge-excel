@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/korso/merge-excel/internal/core"
+	"github.com/DatKorso/Merge-excel/internal/core"
 )
 
 // Manager управляет профилями конфигурации

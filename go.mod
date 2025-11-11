@@ -1,4 +1,4 @@
-module github.com/korso/merge-excel
+module github.com/DatKorso/Merge-excel
 
 go 1.25.3
 

@@ -63,7 +63,7 @@
 **Результаты:**
 ```
 PASS
-ok      github.com/korso/merge-excel/internal/excel     0.663s
+ok      github.com/DatKorso/Merge-excel/internal/excel     0.663s
 coverage: 63.2% of statements
 ```
 

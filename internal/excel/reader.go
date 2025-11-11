@@ -7,7 +7,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	apperrors "github.com/korso/merge-excel/internal/errors"
+	apperrors "github.com/DatKorso/Merge-excel/internal/errors"
 )
 
 // Reader предоставляет методы для чтения Excel файлов

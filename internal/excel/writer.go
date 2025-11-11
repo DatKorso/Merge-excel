@@ -5,7 +5,7 @@ import (
 
 	"github.com/xuri/excelize/v2"
 
-	apperrors "github.com/korso/merge-excel/internal/errors"
+	apperrors "github.com/DatKorso/Merge-excel/internal/errors"
 )
 
 // Writer предоставляет методы для записи Excel файлов
