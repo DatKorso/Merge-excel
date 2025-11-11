@@ -42,13 +42,28 @@ func (w *Writer) Close() error {
 
 // CreateSheet создает новый лист с указанным именем
 func (w *Writer) CreateSheet(sheetName string) error {
+	// Если это первый создаваемый лист и существует только Sheet1 по умолчанию,
+	// переименовываем Sheet1 вместо создания нового листа
+	sheets := w.file.GetSheetList()
+	if len(sheets) == 1 && sheets[0] == "Sheet1" {
+		// Переименовываем Sheet1 в нужное имя
+		if err := w.file.SetSheetName("Sheet1", sheetName); err != nil {
+			return fmt.Errorf("failed to rename default sheet to '%s': %w", sheetName, err)
+		}
+		// Устанавливаем его как активный
+		index, _ := w.file.GetSheetIndex(sheetName)
+		w.file.SetActiveSheet(index)
+		return nil
+	}
+
+	// Для всех последующих листов создаем новый
 	index, err := w.file.NewSheet(sheetName)
 	if err != nil {
 		return fmt.Errorf("failed to create sheet '%s': %w", sheetName, err)
 	}
 
-	// Устанавливаем активным первый лист (если это первый созданный лист)
-	if index == 0 {
+	// Устанавливаем активным первый созданный лист (если это первый не-Sheet1 лист)
+	if w.file.GetActiveSheetIndex() == 0 {
 		w.file.SetActiveSheet(index)
 	}
 

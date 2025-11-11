@@ -10,17 +10,14 @@ import (
 func TestNewMerger(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	profile := NewProfile("test_profile")
-	profile.BaseFileName = "test.xlsx"
-
-	merger := NewMerger(profile, logger)
+	merger := NewMerger(nil, logger)
 
 	if merger == nil {
 		t.Fatal("merger не должен быть nil")
 	}
 
-	if merger.profile != profile {
-		t.Error("профиль не установлен корректно")
+	if merger.logger != logger {
+		t.Error("логгер не установлен корректно")
 	}
 }
 
@@ -38,46 +35,39 @@ func TestMergeFiles(t *testing.T) {
 	}
 
 	// Создаем анализатор для получения конфигурации
-	analyzer, err := NewBaseAnalyzer(testFile1, logger)
-	if err != nil {
-		t.Fatalf("не удалось создать анализатор: %v", err)
-	}
+	analyzer := NewBaseAnalyzer(nil, logger)
 	defer analyzer.Close()
 
-	// Анализируем листы
-	configs, err := analyzer.AnalyzeSheets()
-	if err != nil {
-		t.Fatalf("ошибка при анализе листов: %v", err)
+	if err := analyzer.AnalyzeFile(testFile1); err != nil {
+		t.Fatalf("не удалось проанализировать файл: %v", err)
 	}
 
+	// Получаем конфигурацию листов
+	configs := analyzer.GetSheetConfigs()
 	if len(configs) == 0 {
 		t.Fatal("нет листов для тестирования")
 	}
 
 	// Устанавливаем правильный номер строки заголовков (строка 5 для тестовых файлов)
 	// Но обрабатываем только листы с достаточным количеством строк
-	validConfigs := []SheetConfig{}
+	sheetConfigs := make(map[string]*SheetConfig)
 	for i := range configs {
 		// Пытаемся установить строку 5, если не получается - пропускаем этот лист
 		configs[i].HeaderRow = 5
+		configs[i].Enabled = true
 		if err := analyzer.UpdateHeadersForSheet(&configs[i]); err != nil {
 			t.Logf("Пропускаем лист '%s': %v", configs[i].SheetName, err)
 			continue
 		}
-		validConfigs = append(validConfigs, configs[i])
+		sheetConfigs[configs[i].SheetName] = &configs[i]
 	}
 	
-	if len(validConfigs) == 0 {
+	if len(sheetConfigs) == 0 {
 		t.Skip("нет листов с достаточным количеством строк для тестирования")
 	}
 
-	// Создаем профиль
-	profile := NewProfile("test_merge")
-	profile.BaseFileName = testFile1
-	profile.Sheets = validConfigs
-
 	// Создаем merger
-	merger := NewMerger(profile, logger)
+	merger := NewMerger(nil, logger)
 
 	// Тестируем прогресс callback
 	var progressUpdates int
@@ -86,9 +76,9 @@ func TestMergeFiles(t *testing.T) {
 		t.Logf("Прогресс: %d/%d - %s", current, total, message)
 	})
 
-	// Выполняем объединение
-	files := []string{testFile1, testFile2}
-	result, err := merger.MergeFiles(files)
+	// Выполняем объединение (базовый файл + дополнительные файлы)
+	files := []string{testFile2}
+	result, err := merger.MergeFiles(testFile1, files, sheetConfigs)
 	if err != nil {
 		t.Fatalf("ошибка при объединении файлов: %v", err)
 	}
@@ -98,15 +88,15 @@ func TestMergeFiles(t *testing.T) {
 		t.Fatal("результат не должен быть nil")
 	}
 
-	if result.TotalFiles != 2 {
-		t.Errorf("ожидалось 2 файла, получено %d", result.TotalFiles)
+	if result.ProcessedFiles != 2 {
+		t.Errorf("ожидалось 2 файла, получено %d", result.ProcessedFiles)
 	}
 
 	if result.ProcessedSheets == 0 {
 		t.Error("ожидался хотя бы один обработанный лист")
 	}
 
-	if len(result.SheetData) == 0 {
+	if len(result.SheetStats) == 0 {
 		t.Error("ожидались данные листов")
 	}
 
@@ -115,13 +105,13 @@ func TestMergeFiles(t *testing.T) {
 	}
 
 	// Выводим статистику
-	t.Logf("Всего файлов: %d", result.TotalFiles)
+	t.Logf("Всего файлов: %d", result.ProcessedFiles)
 	t.Logf("Обработано листов: %d", result.ProcessedSheets)
 	t.Logf("Всего строк: %d", result.TotalRows)
 	t.Logf("Предупреждений: %d", len(result.Warnings))
 
-	for sheetName, rows := range result.SheetData {
-		t.Logf("Лист '%s': %d строк", sheetName, len(rows))
+	for sheetName, stats := range result.SheetStats {
+		t.Logf("Лист '%s': %d строк", sheetName, stats.RowsMerged)
 	}
 
 	for _, warning := range result.Warnings {
@@ -132,66 +122,28 @@ func TestMergeFiles(t *testing.T) {
 func TestMergeFilesWithErrors(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
 
-	t.Run("пустой список файлов", func(t *testing.T) {
-		profile := NewProfile("test")
-		profile.BaseFileName = "test.xlsx"
-		merger := NewMerger(profile, logger)
-
-		_, err := merger.MergeFiles([]string{})
-		if err == nil {
-			t.Error("ожидалась ошибка для пустого списка файлов")
-		}
-	})
-
-	t.Run("нет включенных листов", func(t *testing.T) {
-		profile := NewProfile("test")
-		profile.BaseFileName = "test.xlsx"
-		profile.Sheets = []SheetConfig{
-			{
+	t.Run("пустой базовый файл", func(t *testing.T) {
+		merger := NewMerger(nil, logger)
+		sheetConfigs := map[string]*SheetConfig{
+			"Sheet1": {
 				SheetName: "Sheet1",
-				Enabled:   false,
+				Enabled:   true,
 				HeaderRow: 1,
 			},
 		}
 
-		merger := NewMerger(profile, logger)
-
-		_, err := merger.MergeFiles([]string{"file1.xlsx"})
+		_, err := merger.MergeFiles("", []string{}, sheetConfigs)
 		if err == nil {
-			t.Error("ожидалась ошибка когда нет включенных листов")
-		}
-	})
-}
-
-func TestValidateFiles(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-	testFile := filepath.Join("..", "..", "testdata", "Повседневная обувь_04.11.2025.xlsx")
-
-	if _, err := os.Stat(testFile); os.IsNotExist(err) {
-		t.Skip("тестовый файл не найден:", testFile)
-	}
-
-	profile := NewProfile("test")
-	merger := NewMerger(profile, logger)
-
-	t.Run("валидные файлы", func(t *testing.T) {
-		err := merger.ValidateFiles([]string{testFile})
-		if err != nil {
-			t.Errorf("не ожидалась ошибка для валидных файлов: %v", err)
+			t.Error("ожидалась ошибка для пустого базового файла")
 		}
 	})
 
-	t.Run("несуществующий файл", func(t *testing.T) {
-		err := merger.ValidateFiles([]string{"несуществующий.xlsx"})
-		if err == nil {
-			t.Error("ожидалась ошибка для несуществующего файла")
-		}
-	})
+	t.Run("нет листов для обработки", func(t *testing.T) {
+		merger := NewMerger(nil, logger)
 
-	t.Run("пустой список", func(t *testing.T) {
-		err := merger.ValidateFiles([]string{})
+		_, err := merger.MergeFiles("test.xlsx", []string{"file1.xlsx"}, map[string]*SheetConfig{})
 		if err == nil {
-			t.Error("ожидалась ошибка для пустого списка")
+			t.Error("ожидалась ошибка когда нет листов для обработки")
 		}
 	})
 }
@@ -243,33 +195,4 @@ func TestFilterEmptyRows(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGetStats(t *testing.T) {
-	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError}))
-
-	profile := NewProfile("test_profile")
-	profile.BaseFileName = "base.xlsx"
-	profile.Sheets = []SheetConfig{
-		{SheetName: "Sheet1", Enabled: true, HeaderRow: 1},
-		{SheetName: "Sheet2", Enabled: true, HeaderRow: 1},
-		{SheetName: "Sheet3", Enabled: false, HeaderRow: 1},
-	}
-
-	merger := NewMerger(profile, logger)
-	stats := merger.GetStats()
-
-	if stats["profile_name"] != "test_profile" {
-		t.Errorf("неверное имя профиля в статистике")
-	}
-
-	if stats["total_sheets"] != 3 {
-		t.Errorf("ожидалось 3 листа, получено %v", stats["total_sheets"])
-	}
-
-	if stats["enabled_sheets"] != 2 {
-		t.Errorf("ожидалось 2 включенных листа, получено %v", stats["enabled_sheets"])
-	}
-
-	t.Logf("Статистика: %+v", stats)
 }

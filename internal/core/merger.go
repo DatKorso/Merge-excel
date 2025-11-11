@@ -60,7 +60,7 @@ func (m *Merger) notifyProgress(current, total int, message string) {
 
 // MergeResult результат объединения файлов
 type MergeResult struct {
-	WorkbookData    interface{}            // Данные workbook для сохранения
+	WorkbookData    *excel.Writer          // Объединенная книга Excel для сохранения
 	ProcessedFiles  int                    // Общее количество обработанных файлов
 	ProcessedSheets int                    // Количество обработанных листов
 	TotalRows       int                    // Общее количество объединенных строк
@@ -76,9 +76,11 @@ type SheetStat struct {
 }
 
 // MergeFiles объединяет несколько Excel файлов согласно конфигурации
-func (m *Merger) MergeFiles(filePaths []string, sheetConfigs map[string]*SheetConfig) (*MergeResult, error) {
-	if len(filePaths) == 0 {
-		return nil, fmt.Errorf("список файлов для объединения пуст")
+// baseFilePath - путь к базовому файлу (его данные тоже будут включены)
+// filePaths - список дополнительных файлов для объединения
+func (m *Merger) MergeFiles(baseFilePath string, filePaths []string, sheetConfigs map[string]*SheetConfig) (*MergeResult, error) {
+	if baseFilePath == "" {
+		return nil, fmt.Errorf("путь к базовому файлу не указан")
 	}
 
 	if len(sheetConfigs) == 0 {
@@ -86,7 +88,8 @@ func (m *Merger) MergeFiles(filePaths []string, sheetConfigs map[string]*SheetCo
 	}
 
 	m.logger.Info("начало объединения файлов",
-		"files_count", len(filePaths),
+		"base_file", baseFilePath,
+		"additional_files_count", len(filePaths),
 		"sheets_count", len(sheetConfigs),
 	)
 
@@ -95,13 +98,15 @@ func (m *Merger) MergeFiles(filePaths []string, sheetConfigs map[string]*SheetCo
 		Warnings:   []string{},
 	}
 
-	// Вычисляем общее количество операций для прогресса
-	totalOperations := len(sheetConfigs) * len(filePaths)
-	currentOperation := 0
+	// Создаем новый Writer для результата
+	writer := excel.NewWriter()
+	result.WorkbookData = writer
 
-	// Создаем новую книгу для результата (используем первый файл как шаблон)
-	// Пока оставим WorkbookData как placeholder - его заполнит writer
-	// В реальной реализации здесь будет excelize.File
+	// Вычисляем общее количество операций для прогресса
+	// +1 для базового файла
+	totalFiles := 1 + len(filePaths)
+	totalOperations := len(sheetConfigs) * totalFiles
+	currentOperation := 0
 
 	// Обрабатываем каждый лист
 	for sheetName, sheetConfig := range sheetConfigs {
@@ -111,21 +116,22 @@ func (m *Merger) MergeFiles(filePaths []string, sheetConfigs map[string]*SheetCo
 
 		m.logger.Info("обработка листа", "sheet", sheetName)
 
-		rowsMerged, warnings, err := m.mergeSheet(sheetName, sheetConfig, filePaths, &currentOperation, totalOperations)
+		rowsMerged, warnings, err := m.mergeSheetWithWriter(writer, sheetName, sheetConfig, baseFilePath, filePaths, &currentOperation, totalOperations)
 		if err != nil {
+			writer.Close()
 			return nil, fmt.Errorf("ошибка при обработке листа '%s': %w", sheetName, err)
 		}
 
 		result.SheetStats[sheetName] = &SheetStat{
 			RowsMerged: rowsMerged,
-			FilesCount: len(filePaths),
+			FilesCount: totalFiles,
 		}
 		result.TotalRows += rowsMerged
 		result.Warnings = append(result.Warnings, warnings...)
 		result.ProcessedSheets++
 	}
 
-	result.ProcessedFiles = len(filePaths)
+	result.ProcessedFiles = totalFiles
 
 	m.logger.Info("объединение завершено",
 		"processed_files", result.ProcessedFiles,
@@ -186,6 +192,117 @@ func (m *Merger) mergeSheet(
 		// Фильтруем пустые строки
 		dataRows = filterEmptyRows(dataRows)
 		rowsMerged += len(dataRows)
+
+		m.logger.Info("файл обработан",
+			"file", filepath.Base(filePath),
+			"sheet", sheetName,
+			"rows_added", len(dataRows),
+		)
+
+		reader.Close()
+	}
+
+	return rowsMerged, warnings, nil
+}
+
+// mergeSheetWithWriter объединяет один лист из всех файлов и записывает в Writer
+func (m *Merger) mergeSheetWithWriter(
+	writer *excel.Writer,
+	sheetName string,
+	config *SheetConfig,
+	baseFilePath string,
+	filePaths []string,
+	currentOp *int,
+	totalOps int,
+) (int, []string, error) {
+	var warnings []string
+	rowsMerged := 0
+
+	// Создаем лист в результирующей книге
+	if err := writer.CreateSheet(sheetName); err != nil {
+		return 0, warnings, fmt.Errorf("не удалось создать лист '%s': %w", sheetName, err)
+	}
+
+	// Открываем базовый файл для копирования заголовков и строк до них
+	baseReader, err := excel.NewReader(baseFilePath)
+	if err != nil {
+		return 0, warnings, fmt.Errorf("не удалось открыть базовый файл: %w", err)
+	}
+	defer baseReader.Close()
+
+	// Проверяем наличие листа в базовом файле
+	if !baseReader.SheetExists(sheetName) {
+		return 0, warnings, fmt.Errorf("лист '%s' не найден в базовом файле", sheetName)
+	}
+
+	// Получаем все строки из базового файла
+	baseRows, err := baseReader.GetRows(sheetName)
+	if err != nil {
+		return 0, warnings, fmt.Errorf("не удалось прочитать базовый файл: %w", err)
+	}
+
+	// Копируем строки до заголовков включительно (от 1 до headerRow)
+	if config.HeaderRow > 0 && len(baseRows) >= config.HeaderRow {
+		headerRows := baseRows[:config.HeaderRow]
+		if err := writer.WriteRows(sheetName, 1, headerRows); err != nil {
+			return 0, warnings, fmt.Errorf("не удалось записать заголовки: %w", err)
+		}
+	}
+
+	// Начальная строка для данных (следующая после заголовков)
+	currentRow := config.HeaderRow + 1
+
+	// Объединяем все файлы (включая базовый)
+	allFiles := append([]string{baseFilePath}, filePaths...)
+
+	// Обрабатываем каждый файл
+	for i, filePath := range allFiles {
+		*currentOp++
+		m.notifyProgress(*currentOp, totalOps,
+			fmt.Sprintf("Обработка %s, лист %s (%d/%d)",
+				filepath.Base(filePath), sheetName, i+1, len(allFiles)))
+
+		// Открываем файл
+		reader, err := excel.NewReader(filePath)
+		if err != nil {
+			warning := fmt.Sprintf("не удалось открыть файл %s: %v", filepath.Base(filePath), err)
+			warnings = append(warnings, warning)
+			m.logger.Warn(warning, "file", filePath, "error", err)
+			continue
+		}
+
+		// Проверяем наличие листа
+		if !reader.SheetExists(sheetName) {
+			warning := fmt.Sprintf("лист '%s' не найден в файле %s", sheetName, filepath.Base(filePath))
+			warnings = append(warnings, warning)
+			m.logger.Warn(warning, "file", filePath, "sheet", sheetName)
+			reader.Close()
+			continue
+		}
+
+		// Получаем строки данных (без заголовков)
+		dataRows, err := reader.GetDataRows(sheetName, config.HeaderRow)
+		if err != nil {
+			warning := fmt.Sprintf("не удалось прочитать данные из %s: %v",
+				filepath.Base(filePath), err)
+			warnings = append(warnings, warning)
+			m.logger.Warn(warning, "file", filePath, "error", err)
+			reader.Close()
+			continue
+		}
+
+		// Фильтруем пустые строки
+		dataRows = filterEmptyRows(dataRows)
+
+		// Записываем данные в результирующий файл
+		if len(dataRows) > 0 {
+			if err := writer.WriteRows(sheetName, currentRow, dataRows); err != nil {
+				reader.Close()
+				return 0, warnings, fmt.Errorf("не удалось записать данные: %w", err)
+			}
+			currentRow += len(dataRows)
+			rowsMerged += len(dataRows)
+		}
 
 		m.logger.Info("файл обработан",
 			"file", filepath.Base(filePath),

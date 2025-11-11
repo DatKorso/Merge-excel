@@ -171,7 +171,10 @@ func (t *MergeTab) onStartMerge() {
 			}
 		}
 
-		result, err := t.app.merger.MergeFiles(files, sheetConfigs)
+		// Получаем путь к базовому файлу
+		baseFile := t.app.GetBaseFile()
+
+		result, err := t.app.merger.MergeFiles(baseFile, files, sheetConfigs)
 		
 		doneChan <- err
 		close(progressChan)
@@ -296,19 +299,11 @@ func (t *MergeTab) onSaveResult() {
 		return
 	}
 
-	// Предлагаем имя файла по умолчанию
-	baseFile := t.app.GetBaseFile()
-	baseName := filepath.Base(baseFile)
-	ext := filepath.Ext(baseName)
-	nameWithoutExt := baseName[:len(baseName)-len(ext)]
-	
-	_ = fmt.Sprintf("%s_merged_%s%s",
-		nameWithoutExt,
-		time.Now().Format("2006-01-02_15-04-05"),
-		ext,
-	)
+	// Устанавливаем имя файла по умолчанию
+	defaultName := "merged.xlsx"
 
-	dialog.ShowFileSave(func(writer fyne.URIWriteCloser, err error) {
+	// Создаем диалог сохранения
+	saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
 		if err != nil {
 			t.app.ShowError(err)
 			return
@@ -320,24 +315,35 @@ func (t *MergeTab) onSaveResult() {
 
 		savePath := writer.URI().Path()
 
-		// Сохраняем файл (сейчас WorkbookData пустой, нужно будет реализовать позже)
-		// TODO: Реализовать сохранение реального результата объединения
-		if err := t.app.excelWriter.Save(savePath); err != nil {
+		// Убеждаемся что путь имеет расширение .xlsx
+		if filepath.Ext(savePath) != ".xlsx" {
+			savePath += ".xlsx"
+		}
+
+		// Сохраняем объединенный файл
+		if err := t.mergeResult.WorkbookData.Save(savePath); err != nil {
 			t.app.ShowError(err)
 			return
 		}
 
 		t.app.ShowInfo(
 			"Файл сохранен",
-			fmt.Sprintf("Результат успешно сохранен в:\n%s", savePath),
+			fmt.Sprintf("Результат успешно сохранен в:\n%s\n\nОбъединено строк: %d", 
+				savePath, t.mergeResult.TotalRows),
 		)
 
-		t.app.logger.Info("Merge result saved", "path", savePath)
+		t.app.logger.Info("Merge result saved", 
+			"path", savePath,
+			"total_rows", t.mergeResult.TotalRows,
+			"processed_files", t.mergeResult.ProcessedFiles,
+		)
 
 	}, t.app.window)
 
-	// Устанавливаем имя файла по умолчанию через SetFileName
-	// Примечание: в Fyne это может работать не во всех ОС
+	// Устанавливаем имя файла по умолчанию
+	saveDialog.SetFileName(defaultName)
+	
+	saveDialog.Show()
 }
 
 // Reset сбрасывает состояние вкладки

@@ -106,9 +106,8 @@ func (t *FileListTab) Build() fyne.CanvasObject {
 	)
 	instructionLabel.Wrapping = fyne.TextWrapWord
 
-	// Контейнер с возможностью Drag & Drop
-	dropContainer := NewDropContainer(t.onFilesDropped)
-	dropContainer.content = container.NewBorder(
+	// Создаем основной layout
+	content := container.NewBorder(
 		container.NewVBox(
 			widget.NewLabel("Файлы для объединения:"),
 			instructionLabel,
@@ -120,7 +119,7 @@ func (t *FileListTab) Build() fyne.CanvasObject {
 		t.fileList,
 	)
 
-	return dropContainer
+	return content
 }
 
 // onAddFiles обработчик добавления файлов через диалог
@@ -145,15 +144,22 @@ func (t *FileListTab) onAddFiles() {
 	// Поэтому пользователь может добавлять файлы по одному или использовать Drag & Drop
 }
 
-// onFilesDropped обработчик Drag & Drop
-func (t *FileListTab) onFilesDropped(uris []fyne.URI) {
+// OnFilesDropped обработчик Drag & Drop (публичный метод для вызова из App)
+func (t *FileListTab) OnFilesDropped(uris []fyne.URI) {
+	fmt.Printf("onFilesDropped called with %d URIs\n", len(uris))
+	
 	for _, uri := range uris {
 		path := uri.Path()
+		fmt.Printf("Processing URI: %s (ext: %s)\n", path, filepath.Ext(path))
+		
 		if filepath.Ext(path) == ".xlsx" {
 			t.addFile(path)
+		} else {
+			fmt.Printf("Skipping non-xlsx file: %s\n", path)
 		}
 	}
 }
+
 
 // addFile добавляет файл в список
 func (t *FileListTab) addFile(path string) {
@@ -241,60 +247,45 @@ func (t *FileListTab) GetFiles() []string {
 	return t.files
 }
 
-// DropContainer контейнер с поддержкой Drag & Drop
-type DropContainer struct {
+// DropZone область для приема перетаскиваемых файлов
+type DropZone struct {
 	widget.BaseWidget
-	onDrop  func([]fyne.URI)
 	content fyne.CanvasObject
+	onDrop  func([]fyne.URI)
 }
 
-// NewDropContainer создает новый контейнер с поддержкой Drag & Drop
-func NewDropContainer(onDrop func([]fyne.URI)) *DropContainer {
-	d := &DropContainer{
-		onDrop: onDrop,
+// NewDropZone создает новую зону для Drag & Drop
+func NewDropZone(content fyne.CanvasObject, onDrop func([]fyne.URI)) *DropZone {
+	z := &DropZone{
+		content: content,
+		onDrop:  onDrop,
 	}
-	d.ExtendBaseWidget(d)
-	return d
+	z.ExtendBaseWidget(z)
+	return z
 }
 
-// CreateRenderer создает рендерер для контейнера
-func (d *DropContainer) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(d.content)
+// CreateRenderer создает рендерер
+func (z *DropZone) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(z.content)
 }
 
-// Dragged вызывается при перетаскивании
-func (d *DropContainer) Dragged(ev *fyne.DragEvent) {
-	// Ничего не делаем во время перетаскивания
-}
-
-// DragEnd вызывается при завершении перетаскивания
-func (d *DropContainer) DragEnd() {
-	// Ничего не делаем
-}
-
-// Tapped вызывается при клике (требуется для интерфейса Tappable)
-func (d *DropContainer) Tapped(ev *fyne.PointEvent) {
-	// Ничего не делаем
-}
-
-// TappedSecondary вызывается при правом клике
-func (d *DropContainer) TappedSecondary(ev *fyne.PointEvent) {
-	// Ничего не делаем
-}
-
-// Drop обработчик события Drop
-func (d *DropContainer) Drop(pos fyne.Position, items []fyne.URI) {
-	if d.onDrop != nil {
-		d.onDrop(items)
+// Drop обработчик Drop события
+func (z *DropZone) Drop(items []fyne.URI) {
+	fmt.Printf("DropZone: Drop event! %d items\n", len(items))
+	if z.onDrop != nil {
+		z.onDrop(items)
 	}
 }
 
-// TypedRune обработка ввода символа
-func (d *DropContainer) TypedRune(r rune) {
-	// Не используется
+// Dragged обработчик перетаскивания
+func (z *DropZone) Dragged(ev *fyne.DragEvent) {
+	fmt.Println("DropZone: Dragged")
 }
 
-// TypedKey обработка нажатия клавиши
-func (d *DropContainer) TypedKey(ev *fyne.KeyEvent) {
-	// Не используется
+// DragEnd обработчик окончания перетаскивания
+func (z *DropZone) DragEnd() {
+	fmt.Println("DropZone: DragEnd")
 }
+
+
+

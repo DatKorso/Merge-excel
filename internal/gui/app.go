@@ -78,6 +78,16 @@ func (a *App) Run() {
 	// Устанавливаем содержимое окна
 	a.window.SetContent(tabs)
 
+	// Настраиваем Drag & Drop для всего окна
+	a.window.SetOnDropped(func(pos fyne.Position, items []fyne.URI) {
+		fmt.Printf("Window Drop event! Position: %v, Items: %d\n", pos, len(items))
+		
+		// Проверяем, на какой вкладке мы находимся
+		if tabs.CurrentTabIndex() == 1 { // Вкладка "Файлы для объединения"
+			a.fileListTab.OnFilesDropped(items)
+		}
+	})
+
 	// Обработчик закрытия
 	a.window.SetCloseIntercept(func() {
 		a.onClose()
