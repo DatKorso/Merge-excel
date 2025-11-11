@@ -34,6 +34,7 @@ type App struct {
 	// Текущее состояние
 	currentProfile *core.Profile
 	baseFilePath   string
+	appSettings    *config.AppSettings // Настройки приложения
 }
 
 // NewApp создает новое приложение
@@ -47,6 +48,15 @@ func NewApp(logger *slog.Logger, cfgManager *config.Manager) *App {
 
 	application.analyzer = core.NewBaseAnalyzer(nil, logger)
 	application.merger = core.NewMerger(nil, logger)
+
+	// Загружаем настройки приложения
+	settings, err := cfgManager.LoadSettings()
+	if err != nil {
+		logger.Warn("не удалось загрузить настройки, используем по умолчанию", "error", err)
+		settings = config.NewAppSettings()
+	}
+	application.appSettings = settings
+	logger.Info("настройки приложения загружены", "use_ozon_template", settings.UseOzonTemplate)
 
 	return application
 }
@@ -254,4 +264,9 @@ func (a *App) SetBaseFile(path string) {
 // GetBaseFile возвращает путь к базовому файлу
 func (a *App) GetBaseFile() string {
 	return a.baseFilePath
+}
+
+// GetSettings возвращает настройки приложения
+func (a *App) GetSettings() *config.AppSettings {
+	return a.appSettings
 }

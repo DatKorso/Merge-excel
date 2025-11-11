@@ -331,3 +331,95 @@ type ProfileInfo struct {
 	Size        int64     // Размер файла в байтах
 	IsCorrupt   bool      // Файл поврежден
 }
+
+// AppSettings настройки приложения
+type AppSettings struct {
+	UseOzonTemplate bool `json:"use_ozon_template"` // Использовать шаблон Ozon по умолчанию
+	Version         string `json:"version"`
+}
+
+// NewAppSettings создает настройки по умолчанию
+func NewAppSettings() *AppSettings {
+	return &AppSettings{
+		UseOzonTemplate: true, // По умолчанию включен
+		Version:         "1.0",
+	}
+}
+
+// SaveSettings сохраняет настройки приложения
+func (m *Manager) SaveSettings(settings *AppSettings) error {
+	if settings == nil {
+		return fmt.Errorf("настройки не могут быть nil")
+	}
+
+	settingsPath := filepath.Join(m.configDir, "settings.json")
+
+	data, err := json.MarshalIndent(settings, "", "  ")
+	if err != nil {
+		return fmt.Errorf("не удалось сериализовать настройки: %w", err)
+	}
+
+	if err := os.WriteFile(settingsPath, data, 0644); err != nil {
+		return fmt.Errorf("не удалось записать файл настроек: %w", err)
+	}
+
+	m.logger.Info("настройки сохранены", "path", settingsPath)
+	return nil
+}
+
+// LoadSettings загружает настройки приложения
+func (m *Manager) LoadSettings() (*AppSettings, error) {
+	settingsPath := filepath.Join(m.configDir, "settings.json")
+
+	// Если файл не существует, создаем настройки по умолчанию
+	if _, err := os.Stat(settingsPath); os.IsNotExist(err) {
+		settings := NewAppSettings()
+		if err := m.SaveSettings(settings); err != nil {
+			m.logger.Warn("не удалось сохранить настройки по умолчанию", "error", err)
+		}
+		return settings, nil
+	}
+
+	data, err := os.ReadFile(settingsPath)
+	if err != nil {
+		return nil, fmt.Errorf("не удалось прочитать файл настроек: %w", err)
+	}
+
+	var settings AppSettings
+	if err := json.Unmarshal(data, &settings); err != nil {
+		m.logger.Warn("не удалось десериализовать настройки, используем по умолчанию", "error", err)
+		return NewAppSettings(), nil
+	}
+
+	m.logger.Info("настройки загружены", "use_ozon_template", settings.UseOzonTemplate)
+	return &settings, nil
+}
+
+// GetOzonTemplate возвращает предустановленный шаблон для Ozon
+// Шаблон включает листы: "Шаблон", "Озон.Видео", "Озон.Видеообложка"
+// с номером строки заголовков = 4
+func (m *Manager) GetOzonTemplate() map[string]core.SheetConfig {
+	template := map[string]core.SheetConfig{
+		"Шаблон": {
+			SheetName: "Шаблон",
+			Enabled:   true,
+			HeaderRow: 4,
+			Headers:   []string{},
+		},
+		"Озон.Видео": {
+			SheetName: "Озон.Видео",
+			Enabled:   true,
+			HeaderRow: 4,
+			Headers:   []string{},
+		},
+		"Озон.Видеообложка": {
+			SheetName: "Озон.Видеообложка",
+			Enabled:   true,
+			HeaderRow: 4,
+			Headers:   []string{},
+		},
+	}
+
+	m.logger.Debug("получен шаблон Ozon", "sheets_count", len(template))
+	return template
+}

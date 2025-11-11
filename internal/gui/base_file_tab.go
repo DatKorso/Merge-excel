@@ -19,10 +19,11 @@ type BaseFileTab struct {
 	app *App
 
 	// UI элементы
-	filePathLabel    *widget.Label
-	selectFileBtn    *widget.Button
-	sheetList        *widget.List
-	profileNameEntry *widget.Entry
+	filePathLabel      *widget.Label
+	selectFileBtn      *widget.Button
+	sheetList          *widget.List
+	profileNameEntry   *widget.Entry
+	useOzonTemplateChk *widget.Check // Чекбокс для шаблона Ozon
 	
 	// Панель настройки листа
 	configPanel       *fyne.Container
@@ -64,6 +65,16 @@ func (t *BaseFileTab) Build() fyne.CanvasObject {
 	// Поле ввода имени профиля
 	t.profileNameEntry = widget.NewEntry()
 	t.profileNameEntry.SetPlaceHolder("Введите имя профиля")
+
+	// Чекбокс для использования шаблона Ozon
+	t.useOzonTemplateChk = widget.NewCheck("Использовать шаблон Ozon (листы: Шаблон, Озон.Видео, Озон.Видеообложка с заголовками на строке 4)", func(checked bool) {
+		t.onOzonTemplateToggled(checked)
+	})
+	
+	// Загружаем настройку из конфига
+	if settings := t.app.GetSettings(); settings != nil {
+		t.useOzonTemplateChk.Checked = settings.UseOzonTemplate
+	}
 
 	// Список листов
 	t.sheetList = widget.NewList(
@@ -155,11 +166,6 @@ func (t *BaseFileTab) Build() fyne.CanvasObject {
 			t.previewBtn,
 		),
 		widget.NewSeparator(),
-		container.NewVBox(
-			widget.NewLabel("Заголовки:"),
-			t.headerPreviewText,
-		),
-		widget.NewSeparator(),
 		applyBtn,
 	)
 
@@ -192,6 +198,8 @@ func (t *BaseFileTab) Build() fyne.CanvasObject {
 			widget.NewSeparator(),
 			widget.NewLabel("Имя профиля:"),
 			t.profileNameEntry,
+			widget.NewSeparator(),
+			t.useOzonTemplateChk, // Добавляем чекбокс шаблона
 			widget.NewSeparator(),
 			widget.NewLabel("Шаг 2: Настройте листы для объединения"),
 		),
@@ -253,6 +261,19 @@ func (t *BaseFileTab) analyzeFile(filePath string) {
 			HeaderRow: 1,     // По умолчанию первая строка
 			Headers:   []string{},
 		})
+	}
+
+	// Применяем шаблон Ozon, если он включен
+	if t.useOzonTemplateChk.Checked {
+		template := t.app.configManager.GetOzonTemplate()
+		for i := range t.sheets {
+			sheet := &t.sheets[i]
+			if config, exists := template[sheet.SheetName]; exists {
+				sheet.Enabled = config.Enabled
+				sheet.HeaderRow = config.HeaderRow
+				t.app.logger.Debug("applied Ozon template on load", "sheet", sheet.SheetName, "enabled", sheet.Enabled, "header_row", sheet.HeaderRow)
+			}
+		}
 	}
 
 	// Устанавливаем флаг обновления UI и обновляем список
@@ -437,3 +458,70 @@ func (t *BaseFileTab) LoadProfile(profile *core.Profile) {
 
 	t.app.logger.Info("Profile loaded into UI", "name", profile.ProfileName)
 }
+
+// onOzonTemplateToggled обработчик переключения шаблона Ozon
+func (t *BaseFileTab) onOzonTemplateToggled(checked bool) {
+	// Сохраняем настройку
+	if settings := t.app.GetSettings(); settings != nil {
+		settings.UseOzonTemplate = checked
+		if err := t.app.configManager.SaveSettings(settings); err != nil {
+			t.app.logger.Error("не удалось сохранить настройки", "error", err)
+		}
+	}
+	
+	t.app.logger.Info("Ozon template toggled", "enabled", checked)
+	
+	// Если есть загруженные листы, применяем/снимаем шаблон
+	if len(t.sheets) > 0 {
+		if checked {
+			t.applyOzonTemplate()
+		} else {
+			t.clearOzonTemplate()
+		}
+	}
+}
+
+// applyOzonTemplate применяет шаблон Ozon к загруженным листам
+func (t *BaseFileTab) applyOzonTemplate() {
+	template := t.app.configManager.GetOzonTemplate()
+	
+	for i := range t.sheets {
+		sheet := &t.sheets[i]
+		if config, exists := template[sheet.SheetName]; exists {
+			sheet.Enabled = config.Enabled
+			sheet.HeaderRow = config.HeaderRow
+			t.app.logger.Debug("applied Ozon template", "sheet", sheet.SheetName, "enabled", sheet.Enabled, "header_row", sheet.HeaderRow)
+		} else {
+			// Листы, не входящие в шаблон, отключаем
+			sheet.Enabled = false
+		}
+	}
+	
+	// Обновляем UI
+	t.updatingUI = true
+	t.sheetList.Refresh()
+	t.updatingUI = false
+	t.updateConfigPanel()
+	t.updateProfile()
+	
+	t.app.ShowInfo("Шаблон применен", "Применен шаблон Ozon для листов")
+}
+
+// clearOzonTemplate снимает настройки шаблона Ozon
+func (t *BaseFileTab) clearOzonTemplate() {
+	// Сбрасываем все листы в состояние по умолчанию
+	for i := range t.sheets {
+		t.sheets[i].Enabled = false
+		t.sheets[i].HeaderRow = 1
+	}
+	
+	// Обновляем UI
+	t.updatingUI = true
+	t.sheetList.Refresh()
+	t.updatingUI = false
+	t.updateConfigPanel()
+	t.updateProfile()
+	
+	t.app.ShowInfo("Шаблон сброшен", "Настройки шаблона Ozon сброшены")
+}
+
