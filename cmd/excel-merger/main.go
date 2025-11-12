@@ -1,18 +1,26 @@
 package main
 
 import (
-"log"
-"os"
-"path/filepath"
+	"context"
+	"log"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"time"
 
-"github.com/DatKorso/Merge-excel/internal/config"
-"github.com/DatKorso/Merge-excel/internal/gui"
-"github.com/DatKorso/Merge-excel/internal/logger"
+	"github.com/DatKorso/Merge-excel/internal/config"
+	"github.com/DatKorso/Merge-excel/internal/gui"
+	"github.com/DatKorso/Merge-excel/internal/logger"
+	"github.com/DatKorso/Merge-excel/internal/updater"
 )
 
 const (
-appVersion = "0.1.0-alpha"
-appID      = "com.github.excel-merger"
+	appVersion = "0.1.1"
+	appID      = "com.github.excel-merger"
+	
+	// GitHub repository info
+	githubOwner = "DatKorso"
+	githubRepo  = "Merge-excel"
 )
 
 func main() {
@@ -43,6 +51,10 @@ func main() {
 	application := gui.NewApp(appLogger, configManager)
 	
 	appLogger.Info("GUI инициализирован, запускаю приложение")
+	
+	// Запускаем проверку обновлений в фоновой горутине
+	go checkForUpdates(appLogger, application)
+	
 	application.Run()
 	
 	appLogger.Info("Excel Merger завершен")
@@ -70,4 +82,39 @@ func initAppDirectories() error {
 	}
 
 	return nil
+}
+
+// checkForUpdates проверяет наличие обновлений в фоновом режиме
+func checkForUpdates(appLogger *slog.Logger, application *gui.App) {
+	// Небольшая задержка, чтобы окно успело загрузиться
+	time.Sleep(2 * time.Second)
+	
+	appLogger.Info("Запуск проверки обновлений")
+	
+	// Создаем контекст с таймаутом
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	
+	// Создаем checker для обновлений
+	updateChecker := updater.NewUpdateChecker(appVersion, githubOwner, githubRepo, appLogger)
+	
+	// Проверяем обновления
+	releaseInfo, err := updateChecker.CheckForUpdates(ctx)
+	if err != nil {
+		appLogger.Warn("Не удалось проверить обновления", "error", err)
+		return
+	}
+	
+	// Если обновление доступно, показываем диалог
+	if releaseInfo != nil && releaseInfo.IsNewer {
+		appLogger.Info("Найдено обновление, показываю диалог",
+			"new_version", releaseInfo.Version,
+		)
+		
+		// Показываем диалог в UI потоке
+		window := application.GetWindow()
+		if window != nil {
+			updater.ShowUpdateDialog(window, releaseInfo)
+		}
+	}
 }

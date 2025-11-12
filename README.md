@@ -172,14 +172,35 @@ cd Merge-excel
 go mod download
 ```
 
+### Использование Makefile (рекомендуется)
+
+Проект включает Makefile для упрощения сборки:
+
+```bash
+# Сборка приложения (оптимизированная, без предупреждений)
+make build
+
+# Быстрая сборка для разработки
+make build-dev
+
+# Сборка и запуск
+make run
+
+# Очистка
+make clean
+
+# Показать все доступные команды
+make help
+```
+
 ### Локальная сборка (для текущей ОС)
 
 ```bash
 # Простая сборка
 go build -o excel-merger ./cmd/excel-merger
 
-# С оптимизацией размера (рекомендуется)
-go build -ldflags="-s -w" -o excel-merger ./cmd/excel-merger
+# С оптимизацией размера и подавлением предупреждений (рекомендуется для macOS)
+go build -ldflags="-s -w -extldflags '-Wl,-w'" -o excel-merger ./cmd/excel-merger
 
 # Запуск
 ./excel-merger

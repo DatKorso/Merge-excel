@@ -67,7 +67,7 @@ func (t *BaseFileTab) Build() fyne.CanvasObject {
 	t.profileNameEntry.SetPlaceHolder("Введите имя профиля")
 
 	// Чекбокс для использования шаблона Ozon
-	t.useOzonTemplateChk = widget.NewCheck("Использовать шаблон Ozon (листы: Шаблон, Озон.Видео, Озон.Видеообложка с заголовками на строке 4)", func(checked bool) {
+	t.useOzonTemplateChk = widget.NewCheck("Использовать шаблон Ozon (листы: Шаблон, Озон.Видео, Озон.Видеообложка + фильтрация по бренду Shuzzi)", func(checked bool) {
 		t.onOzonTemplateToggled(checked)
 	})
 	

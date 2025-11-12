@@ -117,10 +117,6 @@ func (a *App) createMainMenu() *fyne.MainMenu {
 		fyne.NewMenuItem("Сохранить профиль...", func() {
 			a.onSaveProfile()
 		}),
-		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Выход", func() {
-			a.fyneApp.Quit()
-		}),
 	)
 
 	// Меню "Помощь"
@@ -269,4 +265,9 @@ func (a *App) GetBaseFile() string {
 // GetSettings возвращает настройки приложения
 func (a *App) GetSettings() *config.AppSettings {
 	return a.appSettings
+}
+
+// GetWindow возвращает главное окно приложения
+func (a *App) GetWindow() fyne.Window {
+	return a.window
 }

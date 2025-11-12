@@ -137,6 +137,35 @@ func (t *MergeTab) onStartMerge() {
 	profile := t.app.GetProfile()
 	files := t.app.fileListTab.GetFiles()
 
+	// Показываем предупреждение для больших объемов
+	if len(files) >= 5 {
+		t.app.ShowConfirm(
+			"Предупреждение",
+			fmt.Sprintf(
+				"Вы собираетесь объединить %d файлов.\n\n"+
+					"⚠️ Объединение может занять продолжительное время.\n\n"+
+					"При обработке больших файлов полоса прогресса может временно остановиться — "+
+					"это нормально и происходит при чтении файлов. "+
+					"Пожалуйста, дождитесь завершения операции.\n\n"+
+					"Продолжить?",
+				len(files),
+			),
+			func(confirmed bool) {
+				if confirmed {
+					t.startMergeProcess(profile, files)
+				}
+			},
+		)
+		return
+	}
+
+	// Для малого количества файлов запускаем сразу
+	t.startMergeProcess(profile, files)
+}
+
+// startMergeProcess запускает процесс объединения
+func (t *MergeTab) startMergeProcess(profile *core.Profile, files []string) {
+
 	// Сброс состояния
 	t.progressBar.SetValue(0)
 	t.statusLabel.SetText("Начинаю объединение...")
@@ -188,44 +217,51 @@ func (t *MergeTab) onStartMerge() {
 	// Обновляем UI в главной горутине
 	go func() {
 		for update := range progressChan {
-			if update.Total > 0 {
-				progress := float64(update.Current) / float64(update.Total)
-				t.progressBar.SetValue(progress)
-			}
-			t.statusLabel.SetText(update.Message)
-			
-			// Обновляем детали
-			t.detailsLabel.SetText(fmt.Sprintf(
-				"Обработано: %d из %d",
-				update.Current,
-				update.Total,
-			))
+			// Копируем значения для замыкания
+			currentUpdate := update
+			fyne.Do(func() {
+				if currentUpdate.Total > 0 {
+					progress := float64(currentUpdate.Current) / float64(currentUpdate.Total)
+					t.progressBar.SetValue(progress)
+				}
+				t.statusLabel.SetText(currentUpdate.Message)
+				
+				// Обновляем детали
+				t.detailsLabel.SetText(fmt.Sprintf(
+					"Обработано: %d из %d",
+					currentUpdate.Current,
+					currentUpdate.Total,
+				))
+			})
 		}
 
 		// Ждем завершения
 		err := <-doneChan
-		t.mergeInProgress = false
-		t.startBtn.Enable()
+		
+		fyne.Do(func() {
+			t.mergeInProgress = false
+			t.startBtn.Enable()
 
-		if err != nil {
-			t.statusLabel.SetText("Ошибка при объединении")
-			t.progressBar.SetValue(0)
-			t.app.ShowError(err)
-			t.app.logger.Error("Merge failed", "error", err)
-			return
-		}
+			if err != nil {
+				t.statusLabel.SetText("Ошибка при объединении")
+				t.progressBar.SetValue(0)
+				t.app.ShowError(err)
+				t.app.logger.Error("Merge failed", "error", err)
+				return
+			}
 
-		// Объединение успешно
-		t.statusLabel.SetText("Объединение завершено успешно!")
-		t.progressBar.SetValue(1)
-		t.saveBtn.Enable()
+			// Объединение успешно
+			t.statusLabel.SetText("Объединение завершено успешно!")
+			t.progressBar.SetValue(1)
+			t.saveBtn.Enable()
 
-		t.showMergeResult()
+			t.showMergeResult()
 
-		t.app.logger.Info("Merge completed successfully",
-			"duration_ms", t.mergeResult.Duration.Milliseconds(),
-			"total_rows", t.mergeResult.TotalRows,
-		)
+			t.app.logger.Info("Merge completed successfully",
+				"duration_ms", t.mergeResult.Duration.Milliseconds(),
+				"total_rows", t.mergeResult.TotalRows,
+			)
+		})
 	}()
 }
 
@@ -289,6 +325,8 @@ func (t *MergeTab) showMergeResult() {
 		}
 	}
 
+	// Обновление UI должно происходить в UI-потоке
+	// Но этот метод уже вызывается из fyne.Do(), поэтому просто обновляем
 	t.resultPreview.SetText(result)
 }
 
