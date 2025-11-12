@@ -7,11 +7,11 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/DatKorso/Merge-excel/internal/core"
 	apperrors "github.com/DatKorso/Merge-excel/internal/errors"
+	"github.com/DatKorso/Merge-excel/internal/native"
 )
 
 // MergeTab вкладка объединения файлов
@@ -337,51 +337,45 @@ func (t *MergeTab) onSaveResult() {
 		return
 	}
 
-	// Устанавливаем имя файла по умолчанию
-	defaultName := "merged.xlsx"
-
-	// Создаем диалог сохранения
-	saveDialog := dialog.NewFileSave(func(writer fyne.URIWriteCloser, err error) {
-		if err != nil {
-			t.app.ShowError(err)
-			return
-		}
-		if writer == nil {
-			return // Пользователь отменил сохранение
-		}
-		defer writer.Close()
-
-		savePath := writer.URI().Path()
-
-		// Убеждаемся что путь имеет расширение .xlsx
-		if filepath.Ext(savePath) != ".xlsx" {
-			savePath += ".xlsx"
-		}
-
-		// Сохраняем объединенный файл
-		if err := t.mergeResult.WorkbookData.Save(savePath); err != nil {
-			t.app.ShowError(err)
-			return
-		}
-
-		t.app.ShowInfo(
-			"Файл сохранен",
-			fmt.Sprintf("Результат успешно сохранен в:\n%s\n\nОбъединено строк: %d", 
-				savePath, t.mergeResult.TotalRows),
-		)
-
-		t.app.logger.Info("Merge result saved", 
-			"path", savePath,
-			"total_rows", t.mergeResult.TotalRows,
-			"processed_files", t.mergeResult.ProcessedFiles,
-		)
-
-	}, t.app.window)
-
-	// Устанавливаем имя файла по умолчанию
-	saveDialog.SetFileName(defaultName)
+	// Открываем нативный диалог сохранения файла
+	savePath, err := native.FileSaveDialogSimple(
+		"Сохранить объединенный файл",
+		"Excel файлы",
+		"xlsx",
+	)
 	
-	saveDialog.Show()
+	// Проверяем отмену пользователем
+	if native.IsCancelled(err) {
+		return
+	}
+	
+	if err != nil {
+		t.app.ShowError(err)
+		return
+	}
+
+	// Убеждаемся что путь имеет расширение .xlsx
+	if filepath.Ext(savePath) != ".xlsx" {
+		savePath += ".xlsx"
+	}
+
+	// Сохраняем объединенный файл
+	if err := t.mergeResult.WorkbookData.Save(savePath); err != nil {
+		t.app.ShowError(err)
+		return
+	}
+
+	t.app.ShowInfo(
+		"Файл сохранен",
+		fmt.Sprintf("Результат успешно сохранен в:\n%s\n\nОбъединено строк: %d", 
+			savePath, t.mergeResult.TotalRows),
+	)
+
+	t.app.logger.Info("Merge result saved", 
+		"path", savePath,
+		"total_rows", t.mergeResult.TotalRows,
+		"processed_files", t.mergeResult.ProcessedFiles,
+	)
 }
 
 // Reset сбрасывает состояние вкладки

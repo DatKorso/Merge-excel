@@ -14,6 +14,7 @@ import (
 	"github.com/DatKorso/Merge-excel/internal/core"
 	apperrors "github.com/DatKorso/Merge-excel/internal/errors"
 	"github.com/DatKorso/Merge-excel/internal/excel"
+	"github.com/DatKorso/Merge-excel/internal/native"
 )
 
 // App главная структура приложения
@@ -167,28 +168,34 @@ func (a *App) ShowConfirm(title, message string, callback func(bool)) {
 
 // onLoadProfile обработчик загрузки профиля
 func (a *App) onLoadProfile() {
-	dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
-		if err != nil {
-			a.ShowError(err)
-			return
-		}
-		if reader == nil {
-			return // Пользователь отменил выбор
-		}
-		defer reader.Close()
+	// Открываем нативный диалог выбора файла профиля
+	filename, err := native.FileOpenDialog(
+		"Загрузить профиль",
+		"JSON файлы",
+		"json",
+	)
+	
+	// Проверяем отмену пользователем
+	if native.IsCancelled(err) {
+		return
+	}
+	
+	if err != nil {
+		a.ShowError(err)
+		return
+	}
 
-		profile, err := a.configManager.LoadProfile(reader.URI().Path())
-		if err != nil {
-			a.ShowError(err)
-			return
-		}
+	profile, err := a.configManager.LoadProfile(filename)
+	if err != nil {
+		a.ShowError(err)
+		return
+	}
 
-		a.currentProfile = profile
-		a.baseFileTab.LoadProfile(profile)
-		a.ShowInfo("Профиль загружен", "Профиль '"+profile.ProfileName+"' успешно загружен")
+	a.currentProfile = profile
+	a.baseFileTab.LoadProfile(profile)
+	a.ShowInfo("Профиль загружен", "Профиль '"+profile.ProfileName+"' успешно загружен")
 
-		a.logger.Info("Profile loaded", "name", profile.ProfileName)
-	}, a.window)
+	a.logger.Info("Profile loaded", "name", profile.ProfileName)
 }
 
 // onSaveProfile обработчик сохранения профиля
@@ -198,25 +205,31 @@ func (a *App) onSaveProfile() {
 		return
 	}
 
-	dialog.ShowFileSave(func(writer fyne.URIWriteCloser, err error) {
-		if err != nil {
-			a.ShowError(err)
-			return
-		}
-		if writer == nil {
-			return // Пользователь отменил сохранение
-		}
-		defer writer.Close()
+	// Открываем нативный диалог сохранения файла
+	filename, err := native.FileSaveDialogSimple(
+		"Сохранить профиль",
+		"JSON файлы",
+		"json",
+	)
+	
+	// Проверяем отмену пользователем
+	if native.IsCancelled(err) {
+		return
+	}
+	
+	if err != nil {
+		a.ShowError(err)
+		return
+	}
 
-		if err := a.configManager.SaveProfile(a.currentProfile, writer.URI().Path()); err != nil {
-			a.ShowError(err)
-			return
-		}
+	if err := a.configManager.SaveProfile(a.currentProfile, filename); err != nil {
+		a.ShowError(err)
+		return
+	}
 
-		a.ShowInfo("Профиль сохранен", "Профиль '"+a.currentProfile.ProfileName+"' успешно сохранен")
+	a.ShowInfo("Профиль сохранен", "Профиль '"+a.currentProfile.ProfileName+"' успешно сохранен")
 
-		a.logger.Info("Profile saved", "name", a.currentProfile.ProfileName, "path", writer.URI().Path())
-	}, a.window)
+	a.logger.Info("Profile saved", "name", a.currentProfile.ProfileName, "path", filename)
 }
 
 // showAboutDialog показывает диалог "О программе"

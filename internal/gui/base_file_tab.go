@@ -7,11 +7,11 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
 
 	"github.com/DatKorso/Merge-excel/internal/core"
 	apperrors "github.com/DatKorso/Merge-excel/internal/errors"
+	"github.com/DatKorso/Merge-excel/internal/native"
 )
 
 // BaseFileTab вкладка выбора и настройки базового файла
@@ -215,32 +215,36 @@ func (t *BaseFileTab) Build() fyne.CanvasObject {
 
 // onSelectFile обработчик выбора файла
 func (t *BaseFileTab) onSelectFile() {
-	dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
-		if err != nil {
-			t.app.ShowError(err)
-			return
-		}
-		if reader == nil {
-			return // Пользователь отменил выбор
-		}
-		defer reader.Close()
+	// Открываем нативный диалог выбора файла
+	filename, err := native.FileOpenDialog(
+		"Выбрать базовый Excel файл",
+		"Excel файлы",
+		"xlsx",
+	)
+	
+	// Проверяем отмену пользователем
+	if native.IsCancelled(err) {
+		return
+	}
+	
+	if err != nil {
+		t.app.ShowError(err)
+		return
+	}
 
-		path := reader.URI().Path()
-		
-		// Проверяем расширение файла
-		if filepath.Ext(path) != ".xlsx" {
-			t.app.ShowError(apperrors.NewInvalidFormatError(path))
-			return
-		}
+	// Проверяем расширение файла
+	if filepath.Ext(filename) != ".xlsx" {
+		t.app.ShowError(apperrors.NewInvalidFormatError(filename))
+		return
+	}
 
-		t.filePathLabel.SetText(path)
-		t.app.SetBaseFile(path)
+	t.filePathLabel.SetText(filename)
+	t.app.SetBaseFile(filename)
 
-		t.app.logger.Info("Base file selected", "path", path)
-		
-		// Автоматически анализируем файл
-		t.analyzeFile(path)
-	}, t.app.window)
+	t.app.logger.Info("Base file selected", "path", filename)
+	
+	// Автоматически анализируем файл
+	t.analyzeFile(filename)
 }
 
 // analyzeFile анализирует выбранный файл и загружает листы
