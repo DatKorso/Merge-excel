@@ -266,3 +266,8 @@ func (a *App) GetBaseFile() string {
 func (a *App) GetSettings() *config.AppSettings {
 	return a.appSettings
 }
+
+// GetWindow возвращает главное окно приложения
+func (a *App) GetWindow() fyne.Window {
+	return a.window
+}
