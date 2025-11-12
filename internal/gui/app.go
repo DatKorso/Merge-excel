@@ -117,10 +117,6 @@ func (a *App) createMainMenu() *fyne.MainMenu {
 		fyne.NewMenuItem("Сохранить профиль...", func() {
 			a.onSaveProfile()
 		}),
-		fyne.NewMenuItemSeparator(),
-		fyne.NewMenuItem("Выход", func() {
-			a.fyneApp.Quit()
-		}),
 	)
 
 	// Меню "Помощь"
