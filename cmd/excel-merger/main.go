@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	appVersion = "0.1.1"
+	appVersion = "0.1.0"
 	appID      = "com.github.excel-merger"
 	
 	// GitHub repository info
