@@ -416,7 +416,7 @@ xcode-select --install
 ## 👤 Автор
 
 **Ваше имя**
-- GitHub: [@yourusername](https://github.com/yourusername)
+- GitHub: [@DatKorso](https://github.com/DatKorso)
 
 ## 🙏 Благодарности
 

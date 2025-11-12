@@ -6,8 +6,9 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/dialog"
 	"fyne.io/fyne/v2/widget"
+	
+	"github.com/DatKorso/Merge-excel/internal/native"
 )
 
 // FileListTab вкладка со списком файлов для объединения
@@ -124,24 +125,24 @@ func (t *FileListTab) Build() fyne.CanvasObject {
 
 // onAddFiles обработчик добавления файлов через диалог
 func (t *FileListTab) onAddFiles() {
-	dialog.ShowFileOpen(func(reader fyne.URIReadCloser, err error) {
-		if err != nil {
-			t.app.ShowError(err)
-			return
-		}
-		if reader == nil {
-			return // Пользователь отменил выбор
-		}
-		defer reader.Close()
+	// Открываем нативный диалог выбора файла
+	filename, err := native.FileOpenDialog(
+		"Добавить Excel файл",
+		"Excel файлы",
+		"xlsx",
+	)
+	
+	// Проверяем отмену пользователем
+	if native.IsCancelled(err) {
+		return
+	}
+	
+	if err != nil {
+		t.app.ShowError(err)
+		return
+	}
 
-		path := reader.URI().Path()
-		t.addFile(path)
-
-	}, t.app.window)
-
-	// Для множественного выбора используем кастомный диалог
-	// В текущей версии Fyne нет встроенной поддержки множественного выбора
-	// Поэтому пользователь может добавлять файлы по одному или использовать Drag & Drop
+	t.addFile(filename)
 }
 
 // OnFilesDropped обработчик Drag & Drop (публичный метод для вызова из App)
